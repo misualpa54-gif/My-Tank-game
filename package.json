@@ -1,0 +1,19 @@
+{
+  "name": "tank-realms",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tank Realms mobile game",
+  "scripts": {
+    "test": "node --test",
+    "check:js": "eslint assets/js/game.js tests",
+    "check:html": "html-validate tank_realms_debugged_hud.html",
+    "check": "npm run check:js && npm run check:html && npm test"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
+    "html-validate": "^9.7.1",
+    "jsdom": "^26.1.0",
+    "three": "0.128.0"
+  }
+}
