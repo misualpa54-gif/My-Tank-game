@@ -168,6 +168,64 @@
             baseDamage: 22
         };
 
+        const BASELINE_FPS = 60;
+
+        function getFrameEquivalentAlpha(alphaAt60Fps, dt) {
+            return 1 - Math.pow(1 - alphaAt60Fps, dt * BASELINE_FPS);
+        }
+
+        function getFrameEquivalentMultiplier(multiplierAt60Fps, dt) {
+            return Math.pow(multiplierAt60Fps, dt * BASELINE_FPS);
+        }
+
+        function getFrameEquivalentChance(chanceAt60Fps, dt) {
+            return 1 - Math.pow(1 - chanceAt60Fps, dt * BASELINE_FPS);
+        }
+
+        function getSegmentCylinderHitTime(start, end, center, radius, heightThreshold) {
+            const segmentX = end.x - start.x;
+            const segmentZ = end.z - start.z;
+            const segmentLengthSq = segmentX * segmentX + segmentZ * segmentZ;
+            let hitTime = 0;
+
+            if (segmentLengthSq > 0) {
+                hitTime = (
+                    (center.x - start.x) * segmentX +
+                    (center.z - start.z) * segmentZ
+                ) / segmentLengthSq;
+                hitTime = Math.max(0, Math.min(1, hitTime));
+            }
+
+            const closestX = start.x + segmentX * hitTime;
+            const closestZ = start.z + segmentZ * hitTime;
+            const distanceX = closestX - center.x;
+            const distanceZ = closestZ - center.z;
+            if (distanceX * distanceX + distanceZ * distanceZ >= radius * radius) return null;
+
+            const closestY = start.y + (end.y - start.y) * hitTime;
+            if (Math.abs(closestY - center.y) >= heightThreshold) return null;
+            return hitTime;
+        }
+
+        function getArenaBoundaryHitTime(start, end, boundary = 46) {
+            if (Math.abs(end.x) <= boundary && Math.abs(end.z) <= boundary) return null;
+
+            let earliestHit = 1;
+            const deltaX = end.x - start.x;
+            const deltaZ = end.z - start.z;
+            if (Math.abs(end.x) > boundary && deltaX !== 0) {
+                const xBoundary = end.x > boundary ? boundary : -boundary;
+                const xHit = (xBoundary - start.x) / deltaX;
+                if (xHit >= 0 && xHit <= 1) earliestHit = Math.min(earliestHit, xHit);
+            }
+            if (Math.abs(end.z) > boundary && deltaZ !== 0) {
+                const zBoundary = end.z > boundary ? boundary : -boundary;
+                const zHit = (zBoundary - start.z) / deltaZ;
+                if (zHit >= 0 && zHit <= 1) earliestHit = Math.min(earliestHit, zHit);
+            }
+            return earliestHit;
+        }
+
         // Game State
         const DEFAULT_PLAYER_STATS = Object.freeze({
             speed: 100,
@@ -225,6 +283,7 @@
         const bulletPool = [];
         const MAX_POOLED_BULLETS = 128;
         const environmentParticleTransform = new THREE.Object3D();
+        const bulletImpactPosition = new THREE.Vector3();
 
         function collectObjectResources(object, geometries, materials, textures) {
             if (!object || typeof object.traverse !== 'function') return;
@@ -1408,10 +1467,25 @@
                         speed *= (this.typeData?.speed || 1) * 0.55;
                     }
 
-                    const move = new THREE.Vector3(inputVec.x, 0, inputVec.y).normalize().multiplyScalar(speed * dt);
-                    this.velocity.lerp(move, 0.15);
+                    // Store velocity in world units per second. Integrate the
+                    // original 60 FPS smoothing curve over the full time step so
+                    // 30, 60, and 120 FPS travel the same distance.
+                    const move = new THREE.Vector3(inputVec.x, 0, inputVec.y).normalize().multiplyScalar(speed);
+                    const frameCount = dt * BASELINE_FPS;
+                    const retentionAt60Fps = 0.85;
+                    const retainedVelocity = Math.pow(retentionAt60Fps, frameCount);
+                    const displacement = move.clone().multiplyScalar(frameCount);
+                    displacement.add(
+                        prevVel.clone().sub(move).multiplyScalar(
+                            retentionAt60Fps * (1 - retainedVelocity) / (1 - retentionAt60Fps)
+                        )
+                    );
+                    displacement.multiplyScalar(1 / BASELINE_FPS);
+                    this.velocity.copy(move).add(
+                        prevVel.clone().sub(move).multiplyScalar(retainedVelocity)
+                    );
 
-                    const nextPos = this.mesh.position.clone().add(this.velocity);
+                    const nextPos = this.mesh.position.clone().add(displacement);
                     nextPos.x = Math.max(-44, Math.min(44, nextPos.x));
                     nextPos.z = Math.max(-44, Math.min(44, nextPos.z));
                     this.mesh.position.copy(nextPos);
@@ -1425,14 +1499,14 @@
 
                     // Calculate tilt based on turning
                     this.targetTilt.x = -diff * 0.3; // Roll when turning
-                    this.targetTilt.y = this.velocity.length() * 0.02; // Pitch when accelerating
+                    this.targetTilt.y = displacement.length() * 0.02; // Pitch when accelerating
                 } else {
-                    this.velocity.multiplyScalar(0.9);
+                    this.velocity.multiplyScalar(getFrameEquivalentMultiplier(0.9, dt));
                     this.targetTilt.set(0, 0);
                 }
 
                 // Apply acceleration-based tilt
-                this.acceleration.subVectors(this.velocity, prevVel);
+                this.acceleration.subVectors(this.velocity, prevVel).multiplyScalar(1 / BASELINE_FPS);
                 this.targetTilt.y += this.acceleration.z * 2;
                 this.targetTilt.x += this.acceleration.x * 2;
 
@@ -1445,8 +1519,8 @@
                 this.targetTilt.x += Math.atan2(normal.x, normal.y) * 0.5;
                 this.targetTilt.y += Math.atan2(normal.z, normal.y) * 0.5;
 
-                // Smooth tilt animation
-                this.currentTilt.lerp(this.targetTilt, 0.1);
+                // Smooth tilt animation, calibrated to the original 60 FPS feel.
+                this.currentTilt.lerp(this.targetTilt, getFrameEquivalentAlpha(0.1, dt));
 
                 // Apply tilt to tank (but not full rotation)
                 const tiltGroup = this.mesh.children[0]; // Hull
@@ -1457,7 +1531,7 @@
                 }
             }
 
-            aimAt(targetPos) {
+            aimAt(targetPos, dt = 1 / BASELINE_FPS) {
                 if (this.isDead) return;
                 const worldPos = new THREE.Vector3();
                 this.turretPivot.getWorldPosition(worldPos);
@@ -1469,7 +1543,11 @@
                 while (diff > Math.PI) diff -= Math.PI * 2;
                 while (diff < -Math.PI) diff += Math.PI * 2;
 
-                this.turretPivot.rotation.y += diff * (state.controlAssist ? 0.25 : 0.14); // Assist toggle
+                const aimAlpha = getFrameEquivalentAlpha(
+                    state.controlAssist ? 0.25 : 0.14,
+                    dt
+                );
+                this.turretPivot.rotation.y += diff * aimAlpha;
             }
 
             takeDamage(amount) {
@@ -1557,7 +1635,15 @@
             const light = new THREE.PointLight(bulletColor, 2, 12);
             bulletGroup.add(light);
 
-            return { group: bulletGroup, innerGlow, outerGlow, light, trail, color: bulletColor };
+            return {
+                group: bulletGroup,
+                innerGlow,
+                outerGlow,
+                light,
+                trail,
+                color: bulletColor,
+                previousPosition: new THREE.Vector3()
+            };
         }
 
         function acquireBulletVisual(bulletColor) {
@@ -1594,17 +1680,21 @@
             const originalZ = source.barrel.position.z;
             source.barrel.position.z -= 0.5;
 
-            const recoilReturn = () => {
-                if (source.barrel) {
-                    source.barrel.position.z += 0.05;
-                    if (source.barrel.position.z < originalZ) {
-                        requestAnimationFrame(recoilReturn);
-                    } else {
-                        source.barrel.position.z = originalZ;
-                    }
+            let lastRecoilFrame = null;
+            const recoilReturn = (timestamp) => {
+                if (!source.barrel) return;
+                const frameScale = lastRecoilFrame === null
+                    ? 1
+                    : Math.max(0, (timestamp - lastRecoilFrame) * BASELINE_FPS / 1000);
+                lastRecoilFrame = timestamp;
+                source.barrel.position.z += 0.05 * frameScale;
+                if (source.barrel.position.z < originalZ) {
+                    requestAnimationFrame(recoilReturn);
+                } else {
+                    source.barrel.position.z = originalZ;
                 }
             };
-            setTimeout(recoilReturn, 50);
+            setTimeout(() => recoilReturn(performance.now()), 50);
 
             createMuzzleFlash(source);
 
@@ -1621,6 +1711,7 @@
                 const muzzleWorld = new THREE.Vector3();
                 source.barrel.getWorldPosition(muzzleWorld);
                 bulletGroup.position.copy(muzzleWorld);
+                bullet.previousPosition.copy(muzzleWorld);
 
                 // Direction
                 const dir = new THREE.Vector3(0, 0, 1);
@@ -1691,9 +1782,14 @@
             // Animate out
             let scale = 1;
             let lightIntensity = 3;
-            const animateFlash = () => {
-                scale *= 0.82;
-                lightIntensity *= 0.8;
+            let lastFlashFrame = null;
+            const animateFlash = (timestamp) => {
+                const frameScale = lastFlashFrame === null
+                    ? 1
+                    : Math.max(0, (timestamp - lastFlashFrame) * BASELINE_FPS / 1000);
+                lastFlashFrame = timestamp;
+                scale *= Math.pow(0.82, frameScale);
+                lightIntensity *= Math.pow(0.8, frameScale);
                 flashGroup.scale.setScalar(scale);
                 flash.material.opacity = scale;
                 ring.material.opacity = scale * 0.9;
@@ -1705,7 +1801,7 @@
                     removeAndDisposeObject(flashGroup);
                 }
             };
-            animateFlash();
+            animateFlash(performance.now());
         }
 
         function createHealEffect(pos) {
@@ -1891,10 +1987,15 @@
                 scene.add(shockwave);
 
                 let ringScale = 1;
-                const animateRing = () => {
-                    ringScale += 0.4;
+                let lastRingFrame = null;
+                const animateRing = (timestamp) => {
+                    const frameScale = lastRingFrame === null
+                        ? 1
+                        : Math.max(0, (timestamp - lastRingFrame) * BASELINE_FPS / 1000);
+                    lastRingFrame = timestamp;
+                    ringScale += 0.4 * frameScale;
                     shockwave.scale.setScalar(ringScale);
-                    shockwave.material.opacity -= 0.08;
+                    shockwave.material.opacity -= 0.08 * frameScale;
 
                     if (shockwave.material.opacity > 0) {
                         requestAnimationFrame(animateRing);
@@ -1902,20 +2003,25 @@
                         removeAndDisposeObject(shockwave);
                     }
                 };
-                animateRing();
+                animateRing(performance.now());
 
                 const light = new THREE.PointLight(color, 3, 20);
                 light.position.copy(pos);
                 scene.add(light);
 
                 let intensity = 3;
-                const fadeLight = () => {
-                    intensity -= 0.4;
+                let lastLightFrame = null;
+                const fadeLight = (timestamp) => {
+                    const frameScale = lastLightFrame === null
+                        ? 1
+                        : Math.max(0, (timestamp - lastLightFrame) * BASELINE_FPS / 1000);
+                    lastLightFrame = timestamp;
+                    intensity -= 0.4 * frameScale;
                     light.intensity = Math.max(0, intensity);
                     if (intensity > 0) requestAnimationFrame(fadeLight);
                     else removeAndDisposeObject(light);
                 };
-                fadeLight();
+                fadeLight(performance.now());
             }
 
             state.cameraShake = Math.max(state.cameraShake, count > 30 ? 0.5 : 0.2);
@@ -2162,10 +2268,10 @@
             state.targetEnemy = bestTarget;
 
             if (state.targetEnemy) {
-                player.aimAt(state.targetEnemy.mesh.position);
+                player.aimAt(state.targetEnemy.mesh.position, dt);
             } else if (state.input.x !== 0 || state.input.y !== 0) {
                 const tPos = player.mesh.position.clone().add(new THREE.Vector3(state.input.x * 10, 0, state.input.y * 10));
-                player.aimAt(tPos);
+                player.aimAt(tPos, dt);
             }
 
             // Player shooting
@@ -2195,23 +2301,25 @@
                 } else if (e.type === 'sniper') {
                     if (dist < 25) e.move(dt, new THREE.Vector2(-toPlayer.x, -toPlayer.z).normalize().multiplyScalar(0.5));
                     else if (dist > 30) e.move(dt, new THREE.Vector2(toPlayer.x, toPlayer.z).normalize());
-                    e.aimAt(player.mesh.position);
-                    if (Math.random() < 0.008) shoot(e);
+                    e.aimAt(player.mesh.position, dt);
+                    if (Math.random() < getFrameEquivalentChance(0.008, dt)) shoot(e);
                 } else if (e.type === 'berserker') {
                     e.move(dt, new THREE.Vector2(toPlayer.x, toPlayer.z).normalize());
-                    e.aimAt(player.mesh.position);
-                    if (dist < 18 && Math.random() < 0.025) shoot(e);
+                    e.aimAt(player.mesh.position, dt);
+                    if (dist < 18 && Math.random() < getFrameEquivalentChance(0.025, dt)) shoot(e);
                 } else {
                     if (dist > 18) e.move(dt, new THREE.Vector2(toPlayer.x, toPlayer.z).normalize());
-                    e.aimAt(player.mesh.position);
-                    if (Math.random() < 0.012 * (ENEMY_TYPES[e.type]?.fireRate || 0.4)) shoot(e);
+                    e.aimAt(player.mesh.position, dt);
+                    const shotChance = 0.012 * (ENEMY_TYPES[e.type]?.fireRate || 0.4);
+                    if (Math.random() < getFrameEquivalentChance(shotChance, dt)) shoot(e);
                 }
             });
 
             // Bullets
             for (let i = bullets.length - 1; i >= 0; i--) {
                 const b = bullets[i];
-                b.group.position.add(b.group.userData.vel.clone().multiplyScalar(dt));
+                b.previousPosition.copy(b.group.position);
+                b.group.position.addScaledVector(b.group.userData.vel, dt);
                 b.group.userData.life -= dt;
 
                 // Pulse effect
@@ -2221,8 +2329,15 @@
 
                 let hit = false;
 
-                // Wall check
-                if (Math.abs(b.group.position.x) > 46 || Math.abs(b.group.position.z) > 46) {
+                // Swept wall check. Move the impact effect to the arena edge
+                // instead of allowing a long frame to place it beyond the wall.
+                const wallHitTime = getArenaBoundaryHitTime(
+                    b.previousPosition,
+                    b.group.position
+                );
+                if (wallHitTime !== null) {
+                    bulletImpactPosition.copy(b.previousPosition).lerp(b.group.position, wallHitTime);
+                    b.group.position.copy(bulletImpactPosition);
                     hit = true;
                     createExplosion(b.group.position, 6, 0x888888, 'wall');
                 }
@@ -2231,13 +2346,22 @@
                 // Distant decorations and non-collidable visuals are not scanned.
                 if (!hit) {
                     for (const collider of environmentColliders) {
-                        const dx = b.group.position.x - collider.position.x;
-                        const dz = b.group.position.z - collider.position.z;
-                        const distSq = dx * dx + dz * dz;
+                        const colliderHitTime = getSegmentCylinderHitTime(
+                            b.previousPosition,
+                            b.group.position,
+                            collider.position,
+                            collider.radius,
+                            5
+                        );
 
-                        // Preserve the existing cylinder hitbox dimensions.
-                        if (distSq < collider.radius * collider.radius &&
-                            Math.abs(b.group.position.y - collider.position.y) < 5) {
+                        // Preserve the existing cylinder hitbox dimensions while
+                        // checking the complete distance travelled this frame.
+                        if (colliderHitTime !== null) {
+                            bulletImpactPosition.copy(b.previousPosition).lerp(
+                                b.group.position,
+                                colliderHitTime
+                            );
+                            b.group.position.copy(bulletImpactPosition);
                             hit = true;
                             createExplosion(b.group.position, 8, 0xaaaaaa, collider.type);
                             break;
@@ -2250,16 +2374,22 @@
                         for (let j = enemies.length - 1; j >= 0; j--) {
                             const enemy = enemies[j];
                             if (!enemy.isDead) {
-                                // Cylindrical Hitbox: even more forgiving on elevation for gameplay feel
-                                const dx = b.group.position.x - enemy.mesh.position.x;
-                                const dz = b.group.position.z - enemy.mesh.position.z;
-                                const dy = Math.abs(b.group.position.y - enemy.mesh.position.y);
+                                // Preserve the forgiving cylindrical hitbox but
+                                // test the projectile's complete travelled path.
+                                const enemyHitTime = getSegmentCylinderHitTime(
+                                    b.previousPosition,
+                                    b.group.position,
+                                    enemy.mesh.position,
+                                    2.6,
+                                    6.0
+                                );
 
-                                const distSq = dx*dx + dz*dz;
-                                const hitRadius = 2.6; // Slightly larger hitbox
-                                const heightThreshold = 6.0; // Much more forgiving elevation hit (was 3.8)
-
-                                if (distSq < hitRadius*hitRadius && dy < heightThreshold) {
+                                if (enemyHitTime !== null) {
+                                    bulletImpactPosition.copy(b.previousPosition).lerp(
+                                        b.group.position,
+                                        enemyHitTime
+                                    );
+                                    b.group.position.copy(bulletImpactPosition);
                                     enemy.takeDamage(b.group.userData.damage);
 
                                     const enemyColor = ENEMY_TYPES[enemy.type]?.color || 0xff0000;
@@ -2279,13 +2409,22 @@
                             }
                         }
                     } else {
-                        // Enemy hitting Player
-                        const dx = b.group.position.x - player.mesh.position.x;
-                        const dz = b.group.position.z - player.mesh.position.z;
-                        const dy = Math.abs(b.group.position.y - player.mesh.position.y);
+                        // Enemy hitting Player. Preserve the existing hitbox while
+                        // checking the complete projectile segment.
+                        const playerHitTime = getSegmentCylinderHitTime(
+                            b.previousPosition,
+                            b.group.position,
+                            player.mesh.position,
+                            2.5,
+                            3.8
+                        );
 
-                        // Player hitbox slightly larger
-                        if (dx*dx + dz*dz < 2.5*2.5 && dy < 3.8) {
+                        if (playerHitTime !== null) {
+                            bulletImpactPosition.copy(b.previousPosition).lerp(
+                                b.group.position,
+                                playerHitTime
+                            );
+                            b.group.position.copy(bulletImpactPosition);
                             player.takeDamage(b.group.userData.damage);
                             createExplosion(b.group.position, 14, 0x4ade80, 'armor');
 
@@ -2311,9 +2450,14 @@
             // Particles
             for (let i = particles.length - 1; i >= 0; i--) {
                 const p = particles[i];
-                p.mesh.position.add(p.velocity.clone().multiplyScalar(dt));
 
                 if (p.gravity) {
+                    // Integrate the original 60 FPS gravity curve over the full
+                    // time step. At 60 FPS this produces the exact old position.
+                    p.mesh.position.x += p.velocity.x * dt;
+                    p.mesh.position.z += p.velocity.z * dt;
+                    p.mesh.position.y += p.velocity.y * dt -
+                        14 * (dt * dt - dt / BASELINE_FPS);
                     p.velocity.y -= 28 * dt;
                     const groundY = getTerrainHeight(p.mesh.position.x, p.mesh.position.z);
                     if (p.mesh.position.y < groundY + 0.1) {
@@ -2322,6 +2466,8 @@
                         p.velocity.x *= 0.7;
                         p.velocity.z *= 0.7;
                     }
+                } else {
+                    p.mesh.position.addScaledVector(p.velocity, dt);
                 }
 
                 if (p.rotationSpeed) {
@@ -2331,13 +2477,16 @@
                 }
 
                 if (p.isSmoke) {
-                    p.mesh.scale.multiplyScalar(1 + p.expansionRate * dt);
-                    p.velocity.y *= 0.98;
+                    const smokeScaleAt60Fps = 1 + p.expansionRate / BASELINE_FPS;
+                    p.mesh.scale.multiplyScalar(getFrameEquivalentMultiplier(smokeScaleAt60Fps, dt));
+                    p.velocity.y *= getFrameEquivalentMultiplier(0.98, dt);
                 }
 
                 p.life -= dt;
                 p.mesh.material.opacity = Math.max(0, p.life * 1.2);
-                if (!p.isSmoke) p.mesh.scale.multiplyScalar(0.97);
+                if (!p.isSmoke) {
+                    p.mesh.scale.multiplyScalar(getFrameEquivalentMultiplier(0.97, dt));
+                }
 
                 if (p.life <= 0) {
                     removeAndDisposeObject(p.mesh);
@@ -2402,7 +2551,8 @@
             // Camera follow
             const camOffset = state.cameraMode === 'wide' ? new THREE.Vector3(0, 28, 36) : new THREE.Vector3(0, 22, 28);
             const targetCam = player.mesh.position.clone().add(camOffset);
-            camera.position.lerp(targetCam, state.cameraMode === 'wide' ? 0.045 : 0.06);
+            const cameraAlphaAt60Fps = state.cameraMode === 'wide' ? 0.045 : 0.06;
+            camera.position.lerp(targetCam, getFrameEquivalentAlpha(cameraAlphaAt60Fps, dt));
             camera.lookAt(player.mesh.position.x, 0, player.mesh.position.z + 5);
 
             if (state.cameraShake > 0) {

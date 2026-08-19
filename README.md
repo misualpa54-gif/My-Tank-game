@@ -4,18 +4,21 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phase 1 stabilized the original game. Phase 2 created the offline Android foundation and a successful debug APK. Phase 3 now improves memory and rendering performance:
+Phase 1 stabilized the original game. Phase 2 created the offline Android foundation and a successful debug APK. Phase 3 reduced rendering and memory pressure. Phase 4 now makes timing and collisions consistent across devices:
 
-- repeated trees, background rocks, grass, and ambient particles use instanced rendering;
-- the forest menu scene dropped from 2,395 meshes to 43 while keeping its object density;
-- projectiles reuse a capped 128-object pool;
-- bullets scan only real foreground scenery colliders;
-- removed biome, tank, projectile, particle, texture, material, geometry, and shadow resources are explicitly disposed;
-- 30 biome transitions, 50 restarts, and a 200-projectile pool-release stress test are automated;
+- enemy firing probability is calibrated to the original 60 FPS balance at 30–120 FPS;
+- player and enemy movement covers the same distance at 30, 60, and 120 FPS;
+- turret aiming, camera following, suspension, particles, smoke, recoil, muzzle flashes, shockwaves, and impact lights are time-based;
+- projectiles test their complete travelled path against enemies, the player, trees, rocks, and walls;
+- the confirmed six-unit frame-stall tunnelling case now hits for the unchanged 22 damage;
+- Phase 3 instancing, disposal, projectile pooling, and collision-list improvements remain active;
 - the browser and APK remain fully offline;
 - Android identity remains `com.thiltete.tankrealms`, portrait-only, with Android 9 as the minimum.
 
-Detailed measurements are in `docs/phase3-performance-report.md`.
+Detailed reports are in:
+
+- `docs/phase3-performance-report.md`
+- `docs/phase4-consistency-report.md`
 
 The approved random upgrades, combo, coins, garage, three tank designs, saving, quality levels, complete audio, and portrait HUD redesign will be built in later phases.
 

@@ -144,7 +144,30 @@ function createHarness() {
       acquireBulletVisual,
       releaseBulletVisual,
       releaseBulletAt,
-      getSpawnRateForLevel
+      updatePhysics,
+      getFrameEquivalentAlpha,
+      getFrameEquivalentMultiplier,
+      getFrameEquivalentChance,
+      getSegmentCylinderHitTime,
+      getArenaBoundaryHitTime,
+      getSpawnRateForLevel,
+      makeEnemy: (type, x, z) => {
+        const enemy = new Tank(ENEMY_TYPES[type].color, false, type);
+        enemy.mesh.position.set(x, 0, z);
+        enemies.push(enemy);
+        return enemy;
+      },
+      measureTankMovement: (fps, seconds) => {
+        const tank = new Tank(0x22c55e, true);
+        tank.mesh.position.set(0, 0, 0);
+        const input = new THREE.Vector2(0, 1);
+        for (let frame = 0; frame < fps * seconds; frame++) {
+          tank.move(1 / fps, input);
+        }
+        const distance = tank.mesh.position.z;
+        removeAndDisposeObject(tank.mesh);
+        return distance;
+      }
     };
   `;
 
@@ -286,6 +309,52 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.ok(Math.abs(api.getSpawnRateForLevel(1) - levelOneExpected) < 1e-10);
     assert.ok(api.getSpawnRateForLevel(10) < api.getSpawnRateForLevel(1));
     assert.equal(harness.intervals.length, 0);
+  });
+
+  await t.test('matches 60 FPS behavior at 30, 60, and 120 FPS', () => {
+    const chanceAt60 = 0.008;
+    const chanceAt30 = api.getFrameEquivalentChance(chanceAt60, 1 / 30);
+    const chanceAt120 = api.getFrameEquivalentChance(chanceAt60, 1 / 120);
+    assert.ok(Math.abs(chanceAt30 - (1 - Math.pow(1 - chanceAt60, 2))) < 1e-12);
+    assert.ok(Math.abs((1 - Math.pow(1 - chanceAt120, 2)) - chanceAt60) < 1e-12);
+
+    const movement30 = api.measureTankMovement(30, 1);
+    const movement60 = api.measureTankMovement(60, 1);
+    const movement120 = api.measureTankMovement(120, 1);
+    assert.ok(Math.abs(movement30 - movement60) < 1e-8);
+    assert.ok(Math.abs(movement120 - movement60) < 1e-8);
+  });
+
+  await t.test('detects collisions across the complete projectile path', () => {
+    const start = new window.THREE.Vector3(0, 2, 8.45);
+    const end = new window.THREE.Vector3(0, 2, 14.45);
+    const target = new window.THREE.Vector3(0, 0, 11.5);
+    assert.ok(start.distanceTo(target) > 2.6);
+    assert.ok(end.distanceTo(target) > 2.6);
+    assert.notEqual(api.getSegmentCylinderHitTime(start, end, target, 2.6, 6), null);
+    assert.ok(Math.abs(
+      api.getArenaBoundaryHitTime(
+        new window.THREE.Vector3(45, 2, 0),
+        new window.THREE.Vector3(51, 2, 0)
+      ) - (1 / 6)
+    ) < 1e-12);
+  });
+
+  await t.test('prevents a stalled frame from tunnelling through an enemy', () => {
+    api.startGame();
+    const enemy = api.makeEnemy('soldier', 0, 11.5);
+    enemy.move = () => {};
+    enemy.aimAt = () => {};
+    const oldRandom = window.Math.random;
+    window.Math.random = () => 1;
+
+    api.shoot(api.player());
+    api.updatePhysics(0.1);
+    api.updatePhysics(0.1);
+
+    window.Math.random = oldRandom;
+    assert.equal(enemy.hp, 28);
+    assert.equal(api.bullets().length, 0);
   });
 
   await t.test('responds safely to native app background and Back events', () => {
