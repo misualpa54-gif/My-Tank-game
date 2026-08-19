@@ -4,20 +4,20 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phase 1 stabilized the original game. Phase 2 adds the first Android foundation:
+Phase 1 stabilized the original game. Phase 2 created the offline Android foundation and a successful debug APK. Phase 3 now improves memory and rendering performance:
 
-- the browser build no longer downloads Three.js from a CDN;
-- Vite bundles Three.js and all game code into local files;
-- Capacitor wraps the game as a normal Android application;
-- Android identity is `com.thiltete.tankrealms`;
-- the Android app is locked to portrait orientation;
-- minimum Android version is Android 9 (API 28);
-- the app uses fullscreen immersive mode and keeps the screen awake during play;
-- Android Back and app-background events are connected safely to the game;
-- the APK does not request the Android Internet permission;
-- automated tests verify the offline build and Android configuration.
+- repeated trees, background rocks, grass, and ambient particles use instanced rendering;
+- the forest menu scene dropped from 2,395 meshes to 43 while keeping its object density;
+- projectiles reuse a capped 128-object pool;
+- bullets scan only real foreground scenery colliders;
+- removed biome, tank, projectile, particle, texture, material, geometry, and shadow resources are explicitly disposed;
+- 30 biome transitions, 50 restarts, and a 200-projectile pool-release stress test are automated;
+- the browser and APK remain fully offline;
+- Android identity remains `com.thiltete.tankrealms`, portrait-only, with Android 9 as the minimum.
 
-The approved random upgrades, combo, coins, garage, three tank designs, saving, quality levels, complete audio, portrait HUD redesign, and major rendering optimization will be built in later phases.
+Detailed measurements are in `docs/phase3-performance-report.md`.
+
+The approved random upgrades, combo, coins, garage, three tank designs, saving, quality levels, complete audio, and portrait HUD redesign will be built in later phases.
 
 ## Project structure
 

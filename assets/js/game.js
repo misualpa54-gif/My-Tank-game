@@ -215,8 +215,88 @@
         let ambientLight, dirLight, hemisphereLight;
         let groundMesh, waterMesh, lavaMeshes = [];
         let environmentParticles = [];
+        let environmentParticleBatches = [];
+        let environmentColliders = [];
+        let treeInstanceParts = [];
+        let backgroundRockInstances = [];
         let terrainData = { heights: [], size: 100, segments: 80 };
         let resetInputController = () => {};
+
+        const bulletPool = [];
+        const MAX_POOLED_BULLETS = 128;
+        const environmentParticleTransform = new THREE.Object3D();
+
+        function collectObjectResources(object, geometries, materials, textures) {
+            if (!object || typeof object.traverse !== 'function') return;
+
+            object.traverse(child => {
+                if (child.geometry) geometries.add(child.geometry);
+                const childMaterials = Array.isArray(child.material)
+                    ? child.material
+                    : [child.material];
+
+                childMaterials.filter(Boolean).forEach(material => {
+                    materials.add(material);
+                    Object.values(material).forEach(value => {
+                        if (value && value.isTexture) textures.add(value);
+                    });
+                });
+
+                if (child.isLight && child.shadow) {
+                    if (child.shadow.map) textures.add(child.shadow.map);
+                    if (child.shadow.mapPass) textures.add(child.shadow.mapPass);
+                }
+            });
+        }
+
+        function removeAndDisposeObjects(objects) {
+            const geometries = new Set();
+            const materials = new Set();
+            const textures = new Set();
+
+            objects.filter(Boolean).forEach(object => {
+                if (object.userData && object.userData.resourcesDisposed) {
+                    scene.remove(object);
+                    return;
+                }
+                scene.remove(object);
+                collectObjectResources(object, geometries, materials, textures);
+                if (object.userData) object.userData.resourcesDisposed = true;
+            });
+
+            textures.forEach(texture => texture.dispose());
+            materials.forEach(material => material.dispose());
+            geometries.forEach(geometry => geometry.dispose());
+        }
+
+        function removeAndDisposeObject(object) {
+            if (object) removeAndDisposeObjects([object]);
+        }
+
+        function clearEnvironment() {
+            removeAndDisposeObjects(environmentObjects);
+            removeAndDisposeObjects(environmentParticleBatches);
+            removeAndDisposeObject(groundMesh);
+            removeAndDisposeObject(waterMesh);
+            removeAndDisposeObjects(lavaMeshes);
+            removeAndDisposeObjects([ambientLight, dirLight, hemisphereLight]);
+
+            if (scene.background && scene.background.isTexture) scene.background.dispose();
+            scene.background = null;
+
+            environmentObjects = [];
+            environmentParticles = [];
+            environmentParticleBatches = [];
+            environmentColliders = [];
+            treeInstanceParts = [];
+            backgroundRockInstances = [];
+            groundMesh = null;
+            waterMesh = null;
+            lavaMeshes = [];
+            ambientLight = null;
+            dirLight = null;
+            hemisphereLight = null;
+        }
 
         function clearInputState() {
             state.input.x = 0;
@@ -402,14 +482,10 @@
             const biome = BIOMES[biomeIndex % BIOMES.length];
             state.currentBiome = biomeIndex % BIOMES.length;
 
-            // Clear previous environment
-            environmentObjects.forEach(obj => scene.remove(obj));
-            environmentObjects = [];
-            environmentParticles.forEach(p => scene.remove(p.mesh));
-            environmentParticles = [];
-            if (waterMesh) { scene.remove(waterMesh); waterMesh = null; }
-            lavaMeshes.forEach(m => scene.remove(m));
-            lavaMeshes = [];
+            // Release the previous biome's CPU and GPU resources before building
+            // the next one. Removing an object from a Three.js scene alone is not
+            // enough to release its geometry, materials, textures, or shadow maps.
+            clearEnvironment();
 
             // Show biome name
             const biomeEl = document.getElementById('biome-name');
@@ -434,10 +510,6 @@
             scene.fog = new THREE.Fog(biome.fogColor, biome.fogNear, biome.fogFar);
 
             // Lighting
-            if (ambientLight) scene.remove(ambientLight);
-            if (dirLight) scene.remove(dirLight);
-            if (hemisphereLight) scene.remove(hemisphereLight);
-
             hemisphereLight = new THREE.HemisphereLight(biome.sunColor, biome.groundColor, 0.4);
             scene.add(hemisphereLight);
 
@@ -477,6 +549,7 @@
 
             // Edge Decorations (Background)
             createBackgroundDecorations(biome);
+            finalizeEnvironmentInstances();
 
             // Particles
             createEnvironmentParticles(biome);
@@ -506,7 +579,7 @@
         // PROCEDURAL GROUND WITH HEIGHT DATA
         // ============================================
         function createProceduralGround(biome) {
-            if (groundMesh) scene.remove(groundMesh);
+            if (groundMesh) removeAndDisposeObject(groundMesh);
 
             const size = terrainData.size;
             const segments = terrainData.segments;
@@ -618,86 +691,132 @@
             }
         }
 
-        function createSingleTree(biome, x, z, isBackground = false) {
-            const tree = new THREE.Group();
+        function getInstanceBatch(batches, key, geometryFactory, materialFactory, castShadow) {
+            let batch = batches.find(item => item.key === key);
+            if (!batch) {
+                batch = { key, geometryFactory, materialFactory, castShadow, matrices: [] };
+                batches.push(batch);
+            }
+            return batch;
+        }
 
-            // Simplified geometry for background trees to improve performance
+        function queueInstancePart(batch, groupMatrix, position, rotation, scale) {
+            const part = new THREE.Object3D();
+            part.position.copy(position);
+            part.rotation.set(rotation.x, rotation.y, rotation.z);
+            part.scale.copy(scale);
+            part.updateMatrix();
+            batch.matrices.push(groupMatrix.clone().multiply(part.matrix));
+        }
+
+        function createSingleTree(biome, x, z, isBackground = false) {
             const segments = isBackground ? 5 : 8;
+            const castShadow = !isBackground;
+            const batchSuffix = `${isBackground ? 'background' : 'foreground'}-${segments}`;
+            const parts = [];
 
             if (biome.name.includes('Forest') || biome.name.includes('Swamp')) {
                 const trunkHeight = 4 + Math.random() * 3;
-                const trunkGeo = new THREE.CylinderGeometry(0.3, 0.5, trunkHeight, segments);
-                const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.9 });
-                const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-                trunk.position.y = trunkHeight / 2;
-                if(!isBackground) trunk.castShadow = true;
-                tree.add(trunk);
-
                 const foliageColor = biome.name.includes('Swamp') ? 0x4a6a3a : 0x2d5a27;
+                parts.push({
+                    key: `forest-trunk-${batchSuffix}`,
+                    geometryFactory: () => new THREE.CylinderGeometry(0.3, 0.5, 1, segments),
+                    materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.9 }),
+                    position: new THREE.Vector3(0, trunkHeight / 2, 0),
+                    rotation: new THREE.Euler(),
+                    scale: new THREE.Vector3(1, trunkHeight, 1)
+                });
+
                 for (let j = 0; j < (isBackground ? 2 : 3); j++) {
                     const size = 3.5 - j * 0.8;
-                    const foliageGeo = new THREE.ConeGeometry(size, size * 1.5, segments);
-                    const foliageMat = new THREE.MeshStandardMaterial({
-                        color: foliageColor,
-                        roughness: 0.8
+                    parts.push({
+                        key: `forest-foliage-${foliageColor}-${batchSuffix}`,
+                        geometryFactory: () => new THREE.ConeGeometry(1, 1, segments),
+                        materialFactory: () => new THREE.MeshStandardMaterial({ color: foliageColor, roughness: 0.8 }),
+                        position: new THREE.Vector3(0, trunkHeight + j * 1.5, 0),
+                        rotation: new THREE.Euler(),
+                        scale: new THREE.Vector3(size, size * 1.5, size)
                     });
-                    const foliage = new THREE.Mesh(foliageGeo, foliageMat);
-                    foliage.position.y = trunkHeight + j * 1.5;
-                    if(!isBackground) foliage.castShadow = true;
-                    tree.add(foliage);
                 }
             } else if (biome.name.includes('Frozen')) {
-                const trunkGeo = new THREE.CylinderGeometry(0.2, 0.4, 5, segments);
-                const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9 });
-                const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-                trunk.position.y = 2.5;
-                if(!isBackground) trunk.castShadow = true;
-                tree.add(trunk);
+                parts.push({
+                    key: `frozen-trunk-${batchSuffix}`,
+                    geometryFactory: () => new THREE.CylinderGeometry(0.2, 0.4, 1, segments),
+                    materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9 }),
+                    position: new THREE.Vector3(0, 2.5, 0),
+                    rotation: new THREE.Euler(),
+                    scale: new THREE.Vector3(1, 5, 1)
+                });
 
                 for (let j = 0; j < (isBackground ? 2 : 4); j++) {
                     const size = 2.5 - j * 0.5;
-                    const foliageGeo = new THREE.ConeGeometry(size, 2, segments);
-                    const foliageMat = new THREE.MeshStandardMaterial({ color: 0xe8f4f8, roughness: 0.8 });
-                    const foliage = new THREE.Mesh(foliageGeo, foliageMat);
-                    foliage.position.y = 4 + j * 1.2;
-                    if(!isBackground) foliage.castShadow = true;
-                    tree.add(foliage);
+                    parts.push({
+                        key: `frozen-foliage-${batchSuffix}`,
+                        geometryFactory: () => new THREE.ConeGeometry(1, 1, segments),
+                        materialFactory: () => new THREE.MeshStandardMaterial({ color: 0xe8f4f8, roughness: 0.8 }),
+                        position: new THREE.Vector3(0, 4 + j * 1.2, 0),
+                        rotation: new THREE.Euler(),
+                        scale: new THREE.Vector3(size, 2, size)
+                    });
                 }
             } else if (biome.name.includes('Desert')) {
-                const mainGeo = new THREE.CylinderGeometry(0.4, 0.5, 4, segments);
-                const cactusMat = new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.7 });
-                const main = new THREE.Mesh(mainGeo, cactusMat);
-                main.position.y = 2;
-                if(!isBackground) main.castShadow = true;
-                tree.add(main);
+                parts.push({
+                    key: `cactus-main-${batchSuffix}`,
+                    geometryFactory: () => new THREE.CylinderGeometry(0.4, 0.5, 1, segments),
+                    materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.7 }),
+                    position: new THREE.Vector3(0, 2, 0),
+                    rotation: new THREE.Euler(),
+                    scale: new THREE.Vector3(1, 4, 1)
+                });
 
                 if (Math.random() > 0.3) {
-                    const armGeo = new THREE.CylinderGeometry(0.2, 0.25, 2, 6);
-                    const arm = new THREE.Mesh(armGeo, cactusMat);
-                    arm.position.set(0.6, 2.5, 0);
-                    arm.rotation.z = -Math.PI / 4;
-                    if(!isBackground) arm.castShadow = true;
-                    tree.add(arm);
+                    parts.push({
+                        key: `cactus-arm-${batchSuffix}`,
+                        geometryFactory: () => new THREE.CylinderGeometry(0.2, 0.25, 1, 6),
+                        materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.7 }),
+                        position: new THREE.Vector3(0.6, 2.5, 0),
+                        rotation: new THREE.Euler(0, 0, -Math.PI / 4),
+                        scale: new THREE.Vector3(1, 2, 1)
+                    });
                 }
             } else if (biome.name.includes('Volcanic')) {
-                const trunkGeo = new THREE.CylinderGeometry(0.15, 0.3, 3, 5);
-                const trunkMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1 });
-                const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-                trunk.position.y = 1.5;
-                trunk.rotation.z = Math.random() * 0.3 - 0.15;
-                if(!isBackground) trunk.castShadow = true;
-                tree.add(trunk);
+                parts.push({
+                    key: `volcanic-trunk-${batchSuffix}`,
+                    geometryFactory: () => new THREE.CylinderGeometry(0.15, 0.3, 1, 5),
+                    materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1 }),
+                    position: new THREE.Vector3(0, 1.5, 0),
+                    rotation: new THREE.Euler(0, 0, Math.random() * 0.3 - 0.15),
+                    scale: new THREE.Vector3(1, 3, 1)
+                });
             }
 
             const terrainY = getTerrainHeight(x, z);
-            tree.position.set(x, terrainY, z);
-            tree.rotation.y = Math.random() * Math.PI * 2;
-            const scale = 0.7 + Math.random() * 0.6;
-            tree.scale.setScalar(scale);
+            const rotationY = Math.random() * Math.PI * 2;
+            const treeScale = 0.7 + Math.random() * 0.6;
+            const groupMatrix = new THREE.Matrix4().compose(
+                new THREE.Vector3(x, terrainY, z),
+                new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotationY),
+                new THREE.Vector3(treeScale, treeScale, treeScale)
+            );
 
-            tree.userData = { type: 'tree', radius: 1.5 * scale };
-            scene.add(tree);
-            environmentObjects.push(tree);
+            parts.forEach(part => {
+                const batch = getInstanceBatch(
+                    treeInstanceParts,
+                    part.key,
+                    part.geometryFactory,
+                    part.materialFactory,
+                    castShadow
+                );
+                queueInstancePart(batch, groupMatrix, part.position, part.rotation, part.scale);
+            });
+
+            if (!isBackground) {
+                environmentColliders.push({
+                    type: 'tree',
+                    radius: 1.5 * treeScale,
+                    position: new THREE.Vector3(x, terrainY, z)
+                });
+            }
         }
 
         function createRocks(biome) {
@@ -712,29 +831,55 @@
             }
         }
 
+        function getRockColor(biome) {
+            if (biome.name.includes('Volcanic')) return 0x2a2a2a;
+            if (biome.name.includes('Frozen')) return 0x8090a0;
+            if (biome.name.includes('Desert')) return 0xb8956a;
+            return 0x6a6a6a;
+        }
+
         function createSingleRock(biome, x, z, isBackground = false) {
-            const rockGroup = new THREE.Group();
-
             const size = 0.5 + Math.random() * 2;
-            const rockGeo = new THREE.DodecahedronGeometry(size, isBackground ? 0 : 1);
+            const rockColor = getRockColor(biome);
+            const terrainY = getTerrainHeight(x, z);
+            const rotation = new THREE.Euler(
+                Math.random() * 0.4,
+                Math.random() * Math.PI * 2,
+                Math.random() * 0.4
+            );
 
-            // Only add noise for foreground rocks to save perf
-            if (!isBackground) {
-                const positions = rockGeo.attributes.position;
-                for (let j = 0; j < positions.count; j++) {
-                    const px = positions.getX(j);
-                    const py = positions.getY(j);
-                    const pz = positions.getZ(j);
-                    const noise = 1 + (Math.random() - 0.5) * 0.3;
-                    positions.setXYZ(j, px * noise, py * noise * 0.6, pz * noise);
-                }
-                rockGeo.computeVertexNormals();
+            if (isBackground) {
+                const batch = getInstanceBatch(
+                    backgroundRockInstances,
+                    `background-rock-${rockColor}`,
+                    () => new THREE.DodecahedronGeometry(1, 0),
+                    () => new THREE.MeshStandardMaterial({
+                        color: rockColor,
+                        roughness: 0.95,
+                        metalness: 0.1
+                    }),
+                    false
+                );
+                const matrix = new THREE.Matrix4().compose(
+                    new THREE.Vector3(x, terrainY + size * 0.3, z),
+                    new THREE.Quaternion().setFromEuler(rotation),
+                    new THREE.Vector3(size, size, size)
+                );
+                batch.matrices.push(matrix);
+                return;
             }
 
-            let rockColor = 0x6a6a6a;
-            if (biome.name.includes('Volcanic')) rockColor = 0x2a2a2a;
-            if (biome.name.includes('Frozen')) rockColor = 0x8090a0;
-            if (biome.name.includes('Desert')) rockColor = 0xb8956a;
+            const rockGroup = new THREE.Group();
+            const rockGeo = new THREE.DodecahedronGeometry(size, 1);
+            const positions = rockGeo.attributes.position;
+            for (let j = 0; j < positions.count; j++) {
+                const px = positions.getX(j);
+                const py = positions.getY(j);
+                const pz = positions.getZ(j);
+                const noise = 1 + (Math.random() - 0.5) * 0.3;
+                positions.setXYZ(j, px * noise, py * noise * 0.6, pz * noise);
+            }
+            rockGeo.computeVertexNormals();
 
             const rockMat = new THREE.MeshStandardMaterial({
                 color: rockColor,
@@ -742,20 +887,40 @@
                 metalness: 0.1
             });
             const rock = new THREE.Mesh(rockGeo, rockMat);
-
-            if (!isBackground) {
-                rock.castShadow = true;
-                rock.receiveShadow = true;
-            }
+            rock.castShadow = true;
+            rock.receiveShadow = true;
             rockGroup.add(rock);
 
-            const terrainY = getTerrainHeight(x, z);
             rockGroup.position.set(x, terrainY + size * 0.3, z);
-            rockGroup.rotation.set(Math.random() * 0.4, Math.random() * Math.PI * 2, Math.random() * 0.4);
-
-            rockGroup.userData = { type: 'rock', radius: size };
+            rockGroup.rotation.copy(rotation);
             scene.add(rockGroup);
             environmentObjects.push(rockGroup);
+            environmentColliders.push({
+                type: 'rock',
+                radius: size,
+                position: rockGroup.position
+            });
+        }
+
+        function finalizeEnvironmentInstances() {
+            [...treeInstanceParts, ...backgroundRockInstances].forEach(batch => {
+                if (batch.matrices.length === 0) return;
+                const mesh = new THREE.InstancedMesh(
+                    batch.geometryFactory(),
+                    batch.materialFactory(),
+                    batch.matrices.length
+                );
+                batch.matrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
+                mesh.instanceMatrix.needsUpdate = true;
+                mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+                mesh.castShadow = batch.castShadow;
+                mesh.frustumCulled = false;
+                scene.add(mesh);
+                environmentObjects.push(mesh);
+            });
+
+            treeInstanceParts = [];
+            backgroundRockInstances = [];
         }
 
         function createGrass(biome) {
@@ -767,30 +932,43 @@
                 roughness: 0.9,
                 side: THREE.DoubleSide
             });
+            const bladeCount = biome.grassCount * 5;
+            const grass = new THREE.InstancedMesh(grassGeo, grassMat, bladeCount);
+            const blade = new THREE.Object3D();
+            let instanceIndex = 0;
 
             for (let i = 0; i < biome.grassCount; i++) {
-                const grass = new THREE.Group();
-
+                const localBlades = [];
                 for (let j = 0; j < 5; j++) {
-                    const blade = new THREE.Mesh(grassGeo, grassMat);
-                    blade.position.set(
-                        (Math.random() - 0.5) * 0.5,
-                        0.4,
-                        (Math.random() - 0.5) * 0.5
-                    );
-                    blade.rotation.x = Math.random() * 0.3 - 0.15;
-                    blade.rotation.z = Math.random() * 0.3 - 0.15;
-                    grass.add(blade);
+                    localBlades.push({
+                        x: (Math.random() - 0.5) * 0.5,
+                        z: (Math.random() - 0.5) * 0.5,
+                        rotationX: Math.random() * 0.3 - 0.15,
+                        rotationZ: Math.random() * 0.3 - 0.15
+                    });
                 }
 
                 const x = (Math.random() - 0.5) * 80;
                 const z = (Math.random() - 0.5) * 80;
                 const terrainY = getTerrainHeight(x, z);
-                grass.position.set(x, terrainY, z);
 
-                scene.add(grass);
-                environmentObjects.push(grass);
+                localBlades.forEach(local => {
+                    blade.position.set(x + local.x, terrainY + 0.4, z + local.z);
+                    blade.rotation.set(local.rotationX, 0, local.rotationZ);
+                    blade.scale.set(1, 1, 1);
+                    blade.updateMatrix();
+                    grass.setMatrixAt(instanceIndex, blade.matrix);
+                    instanceIndex++;
+                });
             }
+
+            grass.instanceMatrix.needsUpdate = true;
+            grass.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+            // Three.js r128 does not calculate a complete world-space bounds for
+            // every instance, so disable object-level culling for this batch.
+            grass.frustumCulled = false;
+            scene.add(grass);
+            environmentObjects.push(grass);
         }
 
         function createWater(biome) {
@@ -928,60 +1106,116 @@
             }
         }
 
+        function getEnvironmentParticleVisual(biome) {
+            switch (biome.particleType) {
+                case 'snow':
+                    return {
+                        key: 'snow-white',
+                        geometryFactory: () => new THREE.SphereGeometry(0.12),
+                        materialFactory: () => new THREE.MeshBasicMaterial({ color: 0xffffff })
+                    };
+                case 'embers':
+                    return {
+                        key: `embers-${biome.particleColor}`,
+                        geometryFactory: () => new THREE.SphereGeometry(0.18),
+                        materialFactory: () => new THREE.MeshBasicMaterial({ color: biome.particleColor })
+                    };
+                case 'leaves': {
+                    const leafColor = Math.random() > 0.5 ? 0x228b22 : 0x8b4513;
+                    return {
+                        key: `leaves-${leafColor}`,
+                        geometryFactory: () => new THREE.PlaneGeometry(0.35, 0.35),
+                        materialFactory: () => new THREE.MeshBasicMaterial({
+                            color: leafColor,
+                            side: THREE.DoubleSide
+                        })
+                    };
+                }
+                case 'sand':
+                    return {
+                        key: `sand-${biome.particleColor}`,
+                        geometryFactory: () => new THREE.SphereGeometry(0.06),
+                        materialFactory: () => new THREE.MeshBasicMaterial({
+                            color: biome.particleColor,
+                            transparent: true,
+                            opacity: 0.6
+                        })
+                    };
+                case 'fireflies':
+                    return {
+                        key: 'fireflies-yellow',
+                        geometryFactory: () => new THREE.SphereGeometry(0.12),
+                        materialFactory: () => new THREE.MeshBasicMaterial({ color: 0xffff00 })
+                    };
+                case 'sparkles':
+                    return {
+                        key: `sparkles-${biome.particleColor}`,
+                        geometryFactory: () => new THREE.OctahedronGeometry(0.12),
+                        materialFactory: () => new THREE.MeshBasicMaterial({ color: biome.particleColor })
+                    };
+                default:
+                    return {
+                        key: `default-${biome.particleColor}`,
+                        geometryFactory: () => new THREE.SphereGeometry(0.1),
+                        materialFactory: () => new THREE.MeshBasicMaterial({ color: biome.particleColor })
+                    };
+            }
+        }
+
         function createEnvironmentParticles(biome) {
             const particleCount = 120;
+            const batches = [];
 
             for (let i = 0; i < particleCount; i++) {
-                let geo, mat;
-
-                if (biome.particleType === 'snow') {
-                    geo = new THREE.SphereGeometry(0.12);
-                    mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-                } else if (biome.particleType === 'embers') {
-                    geo = new THREE.SphereGeometry(0.18);
-                    mat = new THREE.MeshBasicMaterial({ color: biome.particleColor });
-                } else if (biome.particleType === 'leaves') {
-                    geo = new THREE.PlaneGeometry(0.35, 0.35);
-                    mat = new THREE.MeshBasicMaterial({
-                        color: Math.random() > 0.5 ? 0x228b22 : 0x8b4513,
-                        side: THREE.DoubleSide
-                    });
-                } else if (biome.particleType === 'sand') {
-                    geo = new THREE.SphereGeometry(0.06);
-                    mat = new THREE.MeshBasicMaterial({ color: biome.particleColor, transparent: true, opacity: 0.6 });
-                } else if (biome.particleType === 'fireflies') {
-                    geo = new THREE.SphereGeometry(0.12);
-                    mat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-                } else if (biome.particleType === 'sparkles') {
-                    geo = new THREE.OctahedronGeometry(0.12);
-                    mat = new THREE.MeshBasicMaterial({ color: biome.particleColor });
-                } else {
-                    geo = new THREE.SphereGeometry(0.1);
-                    mat = new THREE.MeshBasicMaterial({ color: biome.particleColor });
+                const visual = getEnvironmentParticleVisual(biome);
+                let batch = batches.find(item => item.key === visual.key);
+                if (!batch) {
+                    batch = { ...visual, particles: [] };
+                    batches.push(batch);
                 }
 
-                const particle = new THREE.Mesh(geo, mat);
-                particle.position.set(
-                    (Math.random() - 0.5) * 100,
-                    Math.random() * 20 + 2,
-                    (Math.random() - 0.5) * 100
-                );
-
-                const velocity = new THREE.Vector3(
-                    (Math.random() - 0.5) * 2,
-                    biome.particleType === 'embers' ? Math.random() * 3 : -Math.random() * 2,
-                    (Math.random() - 0.5) * 2
-                );
-
-                environmentParticles.push({
-                    mesh: particle,
-                    velocity: velocity,
+                const particle = {
+                    position: new THREE.Vector3(
+                        (Math.random() - 0.5) * 100,
+                        Math.random() * 20 + 2,
+                        (Math.random() - 0.5) * 100
+                    ),
+                    velocity: new THREE.Vector3(
+                        (Math.random() - 0.5) * 2,
+                        biome.particleType === 'embers' ? Math.random() * 3 : -Math.random() * 2,
+                        (Math.random() - 0.5) * 2
+                    ),
                     type: biome.particleType,
-                    phase: Math.random() * Math.PI * 2
-                });
+                    phase: Math.random() * Math.PI * 2,
+                    mesh: null,
+                    instanceIndex: batch.particles.length
+                };
 
-                scene.add(particle);
+                batch.particles.push(particle);
+                environmentParticles.push(particle);
             }
+
+            const particleTransform = new THREE.Object3D();
+            batches.forEach(batch => {
+                const mesh = new THREE.InstancedMesh(
+                    batch.geometryFactory(),
+                    batch.materialFactory(),
+                    batch.particles.length
+                );
+                batch.particles.forEach(particle => {
+                    particle.mesh = mesh;
+                    particleTransform.position.copy(particle.position);
+                    particleTransform.rotation.set(0, 0, 0);
+                    particleTransform.scale.set(1, 1, 1);
+                    particleTransform.updateMatrix();
+                    mesh.setMatrixAt(particle.instanceIndex, particleTransform.matrix);
+                });
+                mesh.instanceMatrix.needsUpdate = true;
+                mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+                mesh.frustumCulled = false;
+                scene.add(mesh);
+                environmentParticleBatches.push(mesh);
+            });
         }
 
         // ============================================
@@ -1262,7 +1496,7 @@
             die() {
                 this.isDead = true;
                 createExplosion(this.mesh.position, this.isPlayer ? 70 : 35);
-                scene.remove(this.mesh);
+                removeAndDisposeObject(this.mesh);
             }
 
             update(dt) {
@@ -1279,6 +1513,82 @@
         // ============================================
         // ENHANCED PROJECTILES - Glowing Plasma Bolts
         // ============================================
+        function createBulletVisual(bulletColor) {
+            const bulletGroup = new THREE.Group();
+
+            const core = new THREE.Mesh(
+                new THREE.SphereGeometry(0.3),
+                new THREE.MeshBasicMaterial({ color: 0xffffff })
+            );
+            bulletGroup.add(core);
+
+            const innerGlow = new THREE.Mesh(
+                new THREE.SphereGeometry(0.45),
+                new THREE.MeshBasicMaterial({
+                    color: bulletColor,
+                    transparent: true,
+                    opacity: 0.9
+                })
+            );
+            bulletGroup.add(innerGlow);
+
+            const outerGlow = new THREE.Mesh(
+                new THREE.SphereGeometry(0.65),
+                new THREE.MeshBasicMaterial({
+                    color: bulletColor,
+                    transparent: true,
+                    opacity: 0.4
+                })
+            );
+            bulletGroup.add(outerGlow);
+
+            const trail = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.15, 0.08, 2.0, 8),
+                new THREE.MeshBasicMaterial({
+                    color: bulletColor,
+                    transparent: true,
+                    opacity: 0.6
+                })
+            );
+            trail.rotation.x = Math.PI / 2;
+            trail.position.z = -1.0;
+            bulletGroup.add(trail);
+
+            const light = new THREE.PointLight(bulletColor, 2, 12);
+            bulletGroup.add(light);
+
+            return { group: bulletGroup, innerGlow, outerGlow, light, trail, color: bulletColor };
+        }
+
+        function acquireBulletVisual(bulletColor) {
+            const poolIndex = bulletPool.findIndex(bullet => bullet.color === bulletColor);
+            const bullet = poolIndex >= 0
+                ? bulletPool.splice(poolIndex, 1)[0]
+                : createBulletVisual(bulletColor);
+
+            bullet.group.scale.set(1, 1, 1);
+            bullet.innerGlow.scale.set(1, 1, 1);
+            bullet.outerGlow.scale.set(1, 1, 1);
+            bullet.light.intensity = 2;
+            return bullet;
+        }
+
+        function releaseBulletVisual(bullet) {
+            scene.remove(bullet.group);
+            bullet.group.userData = {};
+
+            if (bulletPool.length < MAX_POOLED_BULLETS) {
+                bulletPool.push(bullet);
+            } else {
+                removeAndDisposeObject(bullet.group);
+            }
+        }
+
+        function releaseBulletAt(index) {
+            const [bullet] = bullets.splice(index, 1);
+            if (bullet) releaseBulletVisual(bullet);
+        }
+
         function shoot(source) {
             // Recoil animation with smooth return
             const originalZ = source.barrel.position.z;
@@ -1304,49 +1614,8 @@
             for (let i = 0; i < shotCount; i++) {
                 const bulletColor = source.isPlayer ? 0x00ffff : (source.type === 'healer' ? 0x00ff00 : 0xff4444);
 
-                const bulletGroup = new THREE.Group();
-
-                // Core - very bright center
-                const coreGeo = new THREE.SphereGeometry(0.3);
-                const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-                const core = new THREE.Mesh(coreGeo, coreMat);
-                bulletGroup.add(core);
-
-                // Inner glow
-                const innerGlowGeo = new THREE.SphereGeometry(0.45);
-                const innerGlowMat = new THREE.MeshBasicMaterial({
-                    color: bulletColor,
-                    transparent: true,
-                    opacity: 0.9
-                });
-                const innerGlow = new THREE.Mesh(innerGlowGeo, innerGlowMat);
-                bulletGroup.add(innerGlow);
-
-                // Outer glow
-                const outerGlowGeo = new THREE.SphereGeometry(0.65);
-                const outerGlowMat = new THREE.MeshBasicMaterial({
-                    color: bulletColor,
-                    transparent: true,
-                    opacity: 0.4
-                });
-                const outerGlow = new THREE.Mesh(outerGlowGeo, outerGlowMat);
-                bulletGroup.add(outerGlow);
-
-                // Plasma trail (cylinder)
-                const trailGeo = new THREE.CylinderGeometry(0.15, 0.08, 2.0, 8);
-                const trailMat = new THREE.MeshBasicMaterial({
-                    color: bulletColor,
-                    transparent: true,
-                    opacity: 0.6
-                });
-                const trail = new THREE.Mesh(trailGeo, trailMat);
-                trail.rotation.x = Math.PI / 2;
-                trail.position.z = -1.0;
-                bulletGroup.add(trail);
-
-                // Point light for illumination
-                const bulletLight = new THREE.PointLight(bulletColor, 2, 12);
-                bulletGroup.add(bulletLight);
+                const bullet = acquireBulletVisual(bulletColor);
+                const bulletGroup = bullet.group;
 
                 // Position at muzzle
                 const muzzleWorld = new THREE.Vector3();
@@ -1379,7 +1648,7 @@
                 };
 
                 scene.add(bulletGroup);
-                bullets.push({ group: bulletGroup, innerGlow: innerGlow, outerGlow: outerGlow, light: bulletLight, trail: trail });
+                bullets.push(bullet);
             }
         }
 
@@ -1433,7 +1702,7 @@
                 if (scale > 0.05) {
                     requestAnimationFrame(animateFlash);
                 } else {
-                    scene.remove(flashGroup);
+                    removeAndDisposeObject(flashGroup);
                 }
             };
             animateFlash();
@@ -1630,7 +1899,7 @@
                     if (shockwave.material.opacity > 0) {
                         requestAnimationFrame(animateRing);
                     } else {
-                        scene.remove(shockwave);
+                        removeAndDisposeObject(shockwave);
                     }
                 };
                 animateRing();
@@ -1644,7 +1913,7 @@
                     intensity -= 0.4;
                     light.intensity = Math.max(0, intensity);
                     if (intensity > 0) requestAnimationFrame(fadeLight);
-                    else scene.remove(light);
+                    else removeAndDisposeObject(light);
                 };
                 fadeLight();
             }
@@ -1723,13 +1992,14 @@
         }
 
         function clearCombatScene() {
-            if (player) scene.remove(player.mesh);
-            enemies.forEach(e => scene.remove(e.mesh));
-            bullets.forEach(b => scene.remove(b.group));
-            particles.forEach(p => scene.remove(p.mesh));
+            removeAndDisposeObjects([
+                player ? player.mesh : null,
+                ...enemies.map(enemy => enemy.mesh)
+            ]);
+            while (bullets.length > 0) releaseBulletAt(bullets.length - 1);
+            removeAndDisposeObjects(particles.map(particle => particle.mesh));
             player = null;
             enemies = [];
-            bullets = [];
             particles = [];
         }
 
@@ -1957,21 +2227,20 @@
                     createExplosion(b.group.position, 6, 0x888888, 'wall');
                 }
 
-                // Environment Object Check (Trees, Rocks)
+                // Environment Object Check (foreground trees and rocks only).
+                // Distant decorations and non-collidable visuals are not scanned.
                 if (!hit) {
-                    for (const obj of environmentObjects) {
-                        if (obj.userData && obj.userData.radius) {
-                            const dx = b.group.position.x - obj.position.x;
-                            const dz = b.group.position.z - obj.position.z;
-                            const distSq = dx*dx + dz*dz;
-                            const rad = obj.userData.radius;
+                    for (const collider of environmentColliders) {
+                        const dx = b.group.position.x - collider.position.x;
+                        const dz = b.group.position.z - collider.position.z;
+                        const distSq = dx * dx + dz * dz;
 
-                            // Simple cylinder collision for environment
-                            if (distSq < rad*rad && Math.abs(b.group.position.y - obj.position.y) < 5) {
-                                hit = true;
-                                createExplosion(b.group.position, 8, 0xaaaaaa, obj.userData.type);
-                                break;
-                            }
+                        // Preserve the existing cylinder hitbox dimensions.
+                        if (distSq < collider.radius * collider.radius &&
+                            Math.abs(b.group.position.y - collider.position.y) < 5) {
+                            hit = true;
+                            createExplosion(b.group.position, 8, 0xaaaaaa, collider.type);
+                            break;
                         }
                     }
                 }
@@ -2035,8 +2304,7 @@
                         // Hit ground
                         createExplosion(b.group.position, 5, 0x6a6a6a, 'ground');
                     }
-                    scene.remove(b.group);
-                    bullets.splice(i, 1);
+                    releaseBulletAt(i);
                 }
             }
 
@@ -2072,25 +2340,35 @@
                 if (!p.isSmoke) p.mesh.scale.multiplyScalar(0.97);
 
                 if (p.life <= 0) {
-                    scene.remove(p.mesh);
+                    removeAndDisposeObject(p.mesh);
                     particles.splice(i, 1);
                 }
             }
 
-            // Environment particles
+            // Environment particles share one or two instanced meshes instead of
+            // issuing a separate draw call for every particle.
             environmentParticles.forEach(p => {
-                p.mesh.position.add(p.velocity.clone().multiplyScalar(dt));
+                p.position.addScaledVector(p.velocity, dt);
                 p.phase += dt;
 
                 if (p.type === 'fireflies') {
-                    p.mesh.position.x += Math.sin(p.phase * 2) * dt * 2;
-                    p.mesh.position.y += Math.sin(p.phase * 3) * dt;
+                    p.position.x += Math.sin(p.phase * 2) * dt * 2;
+                    p.position.y += Math.sin(p.phase * 3) * dt;
                 }
 
-                if (p.mesh.position.y < 0) p.mesh.position.y = 20;
-                if (p.mesh.position.y > 25) p.mesh.position.y = 0;
-                if (Math.abs(p.mesh.position.x) > 60) p.mesh.position.x *= -0.9;
-                if (Math.abs(p.mesh.position.z) > 60) p.mesh.position.z *= -0.9;
+                if (p.position.y < 0) p.position.y = 20;
+                if (p.position.y > 25) p.position.y = 0;
+                if (Math.abs(p.position.x) > 60) p.position.x *= -0.9;
+                if (Math.abs(p.position.z) > 60) p.position.z *= -0.9;
+
+                environmentParticleTransform.position.copy(p.position);
+                environmentParticleTransform.rotation.set(0, 0, 0);
+                environmentParticleTransform.scale.set(1, 1, 1);
+                environmentParticleTransform.updateMatrix();
+                p.mesh.setMatrixAt(p.instanceIndex, environmentParticleTransform.matrix);
+            });
+            environmentParticleBatches.forEach(batch => {
+                batch.instanceMatrix.needsUpdate = true;
             });
 
             // Animate lava

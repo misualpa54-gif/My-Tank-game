@@ -9,9 +9,11 @@ export default defineConfig({
         chunkSizeWarningLimit: 900
     },
     server: {
-        host: '0.0.0.0'
+        host: '0.0.0.0',
+        allowedHosts: true
     },
     preview: {
-        host: '0.0.0.0'
+        host: '0.0.0.0',
+        allowedHosts: true
     }
 });

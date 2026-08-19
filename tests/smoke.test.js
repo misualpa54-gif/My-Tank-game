@@ -15,6 +15,39 @@ function createTouchEvent(window, type, touches) {
   return event;
 }
 
+function getSceneStats(scene) {
+  const stats = { objects: 0, meshes: 0, instancedMeshes: 0, lights: 0 };
+  const geometries = new Set();
+  const materials = new Set();
+  scene.traverse((object) => {
+    stats.objects += 1;
+    if (object.isMesh) {
+      stats.meshes += 1;
+      if (object.geometry) geometries.add(object.geometry);
+      const objectMaterials = Array.isArray(object.material) ? object.material : [object.material];
+      objectMaterials.filter(Boolean).forEach((material) => materials.add(material));
+    }
+    if (object.isInstancedMesh) stats.instancedMeshes += 1;
+    if (object.isLight) stats.lights += 1;
+  });
+  stats.uniqueGeometries = geometries.size;
+  stats.uniqueMaterials = materials.size;
+  return stats;
+}
+
+function collectResources(roots) {
+  const geometries = new Set();
+  const materials = new Set();
+  roots.forEach((rootObject) => {
+    rootObject.traverse((object) => {
+      if (object.geometry) geometries.add(object.geometry);
+      const objectMaterials = Array.isArray(object.material) ? object.material : [object.material];
+      objectMaterials.filter(Boolean).forEach((material) => materials.add(material));
+    });
+  });
+  return { geometries, materials };
+}
+
 function createHarness() {
   const html = fs.readFileSync(htmlPath, 'utf8');
   const gameSource = fs.readFileSync(gamePath, 'utf8');
@@ -83,6 +116,22 @@ function createHarness() {
       state: () => state,
       player: () => player,
       renderer: () => renderer,
+      scene: () => scene,
+      bullets: () => bullets,
+      bulletPool: () => bulletPool,
+      environmentColliders: () => environmentColliders,
+      environmentObjects: () => environmentObjects,
+      environmentParticles: () => environmentParticles,
+      environmentRoots: () => [
+        ...environmentObjects,
+        ...environmentParticleBatches,
+        groundMesh,
+        waterMesh,
+        ...lavaMeshes,
+        ambientLight,
+        dirLight,
+        hemisphereLight
+      ].filter(Boolean),
       startGame,
       pauseGame,
       resumeGame,
@@ -90,6 +139,11 @@ function createHarness() {
       closeSettings,
       endGame,
       quitToMenu,
+      loadBiome,
+      shoot,
+      acquireBulletVisual,
+      releaseBulletVisual,
+      releaseBulletAt,
       getSpawnRateForLevel
     };
   `;
@@ -112,6 +166,41 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(harness.intervals.length, 0);
     assert.equal(api.renderer().pixelRatio, 1.25);
     assert.equal(harness.animationFrames.length, 1);
+  });
+
+  await t.test('batches dense scenery and keeps only gameplay colliders', () => {
+    const stats = getSceneStats(api.scene());
+    if (process.env.TANK_PERF_REPORT === '1') {
+      process.stdout.write(`\nPHASE3_SCENE_STATS ${JSON.stringify(stats)}\n`);
+    }
+    assert.ok(stats.meshes < 250, `expected fewer than 250 meshes, found ${stats.meshes}`);
+    assert.ok(
+      stats.instancedMeshes >= 7,
+      'forest should instance trees, background rocks, grass, and environment particles'
+    );
+    assert.equal(api.environmentColliders().length, 80);
+  });
+
+  await t.test('disposes old biome geometries, materials, and background texture', () => {
+    const resources = collectResources(api.environmentRoots());
+    const oldBackground = api.scene().background;
+    let disposedGeometries = 0;
+    let disposedMaterials = 0;
+    let disposedBackgrounds = 0;
+
+    resources.geometries.forEach((geometry) => {
+      geometry.addEventListener('dispose', () => { disposedGeometries += 1; });
+    });
+    resources.materials.forEach((material) => {
+      material.addEventListener('dispose', () => { disposedMaterials += 1; });
+    });
+    oldBackground.addEventListener('dispose', () => { disposedBackgrounds += 1; });
+
+    api.loadBiome(1);
+    assert.equal(disposedGeometries, resources.geometries.size);
+    assert.equal(disposedMaterials, resources.materials.size);
+    assert.equal(disposedBackgrounds, 1);
+    assert.notEqual(api.scene().background, oldBackground);
   });
 
   await t.test('moves through playing, paused, settings, and game-over states', () => {
@@ -214,8 +303,49 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(window.TankRealmsApp.handleBackButton(), false);
   });
 
-  await t.test('can restart repeatedly and return cleanly to the menu', () => {
-    for (let i = 0; i < 10; i += 1) api.startGame();
+  await t.test('reuses projectile objects instead of allocating every shot', () => {
+    api.startGame();
+    api.shoot(api.player());
+    assert.equal(api.bullets().length, 1);
+    const firstBulletGroup = api.bullets()[0].group;
+
+    api.releaseBulletAt(0);
+    assert.equal(api.bullets().length, 0);
+    assert.equal(api.bulletPool().length, 1);
+
+    api.shoot(api.player());
+    assert.equal(api.bullets()[0].group, firstBulletGroup);
+    api.releaseBulletAt(0);
+  });
+
+  await t.test('caps the projectile pool during a 200-projectile stress release', () => {
+    const stressBullets = Array.from(
+      { length: 200 },
+      () => api.acquireBulletVisual(0x00ffff)
+    );
+    let overflowGeometryDisposals = 0;
+    stressBullets[stressBullets.length - 1].group.children[0].geometry.addEventListener(
+      'dispose',
+      () => { overflowGeometryDisposals += 1; }
+    );
+
+    stressBullets.forEach((bullet) => api.releaseBulletVisual(bullet));
+    assert.equal(api.bulletPool().length, 128);
+    assert.equal(overflowGeometryDisposals, 1);
+  });
+
+  await t.test('stays within the mesh budget through 30 biome transitions', () => {
+    api.startGame();
+    for (let i = 0; i < 30; i += 1) {
+      api.loadBiome(i % 6);
+      const stats = getSceneStats(api.scene());
+      assert.ok(stats.meshes < 350, `biome ${i % 6} created ${stats.meshes} meshes`);
+      assert.ok(api.environmentColliders().length <= 100);
+    }
+  });
+
+  await t.test('can restart 50 times and return cleanly to the menu', () => {
+    for (let i = 0; i < 50; i += 1) api.startGame();
     assert.equal(api.state().gamePhase, 'playing');
 
     api.quitToMenu();
