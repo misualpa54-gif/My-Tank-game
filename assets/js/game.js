@@ -146,6 +146,51 @@
             berserker: { name: "Berserker", color: 0xec4899, hp: 80, speed: 1.3, damage: 18, fireRate: 0.7, size: 1.2, points: 250, desc: "Aggressive charger" }
         };
 
+        const TANK_DESIGNS = {
+            vanguard: {
+                id: 'vanguard',
+                name: 'Verdant Vanguard',
+                description: 'Classic green armor with cyan plasma.',
+                color: 0x22c55e,
+                accentColor: 0x86efac,
+                projectileColor: 0x00ffff,
+                projectileStyle: 'orb',
+                unlockCost: 0
+            },
+            ember: {
+                id: 'ember',
+                name: 'Ember Warden',
+                description: 'Angular orange armor with an ember bolt.',
+                color: 0xf97316,
+                accentColor: 0xfacc15,
+                projectileColor: 0xff8a00,
+                projectileStyle: 'bolt',
+                unlockCost: 750
+            },
+            azure: {
+                id: 'azure',
+                name: 'Azure Bastion',
+                description: 'Heavy blue styling with crystal plasma.',
+                color: 0x3b82f6,
+                accentColor: 0xa78bfa,
+                projectileColor: 0x8b5cf6,
+                projectileStyle: 'crystal',
+                unlockCost: 1800
+            }
+        };
+        const TANK_DESIGN_LIST = Object.values(TANK_DESIGNS);
+
+        const PERMANENT_UPGRADE_DEFINITIONS = [
+            { id: 'maxHp', name: 'Hull', stat: 'maxHp', amount: 5, maxTier: 5, baseCost: 120 },
+            { id: 'damage', name: 'Damage', stat: 'damage', amount: 4, maxTier: 5, baseCost: 150 },
+            { id: 'speed', name: 'Speed', stat: 'speed', amount: 3, maxTier: 5, baseCost: 140 },
+            { id: 'armor', name: 'Armor', stat: 'armor', amount: 2, maxTier: 5, baseCost: 130 },
+            { id: 'fireRate', name: 'Fire rate', stat: 'fireRate', amount: 3, maxTier: 5, baseCost: 160 }
+        ];
+        const PERMANENT_UPGRADE_BY_ID = new Map(
+            PERMANENT_UPGRADE_DEFINITIONS.map(upgrade => [upgrade.id, upgrade])
+        );
+
         // Temporary run upgrades. All values are capped so long runs cannot
         // create unsafe speed, fire-rate, armor, or projectile counts.
         const UPGRADE_DEFINITIONS = [
@@ -247,11 +292,27 @@
             return Object.fromEntries(UPGRADE_DEFINITIONS.map(upgrade => [upgrade.id, 0]));
         }
 
+        function createDefaultPermanentUpgradeTiers() {
+            return Object.fromEntries(
+                PERMANENT_UPGRADE_DEFINITIONS.map(upgrade => [upgrade.id, 0])
+            );
+        }
+
+        function createDefaultTankUpgradeCollection() {
+            return Object.fromEntries(
+                TANK_DESIGN_LIST.map(tank => [tank.id, createDefaultPermanentUpgradeTiers()])
+            );
+        }
+
         function createDefaultProfile() {
             return {
                 version: SAVE_VERSION,
                 bestScore: 0,
                 bestLevel: 1,
+                coins: 0,
+                ownedTanks: ['vanguard'],
+                selectedTankId: 'vanguard',
+                tankUpgrades: createDefaultTankUpgradeCollection(),
                 settings: {
                     soundEnabled: false,
                     cameraMode: 'follow',
@@ -286,7 +347,14 @@
             cameraMode: 'follow',
             controlAssist: false,
             settingsOpen: false,
+            garageOpen: false,
             upgradeTiers: createDefaultUpgradeTiers(),
+            runTankId: 'vanguard',
+            runPermanentUpgrades: createDefaultPermanentUpgradeTiers(),
+            runBaseStats: createDefaultPlayerStats(),
+            comboCount: 0,
+            comboTimer: 0,
+            comboMultiplier: 1,
             pendingUpgradeCount: 0,
             currentUpgradeChoices: [],
             lastAutoSaveTime: 0
@@ -407,8 +475,37 @@
             return integer ? Math.floor(clamped) : clamped;
         }
 
-        function getStatsFromUpgradeTiers(upgradeTiers) {
+        function sanitizePermanentUpgradeTiers(savedTiers) {
+            const tiers = createDefaultPermanentUpgradeTiers();
+            PERMANENT_UPGRADE_DEFINITIONS.forEach(upgrade => {
+                tiers[upgrade.id] = clampSavedNumber(
+                    savedTiers?.[upgrade.id],
+                    0,
+                    upgrade.maxTier,
+                    0,
+                    true
+                );
+            });
+            return tiers;
+        }
+
+        function getPermanentBaseStats(permanentTiers) {
             const stats = createDefaultPlayerStats();
+            PERMANENT_UPGRADE_DEFINITIONS.forEach(upgrade => {
+                const tier = clampSavedNumber(
+                    permanentTiers?.[upgrade.id],
+                    0,
+                    upgrade.maxTier,
+                    0,
+                    true
+                );
+                stats[upgrade.stat] += upgrade.amount * tier;
+            });
+            return stats;
+        }
+
+        function getStatsFromUpgradeTiers(upgradeTiers, baseStats = DEFAULT_PLAYER_STATS) {
+            const stats = { ...baseStats };
             UPGRADE_DEFINITIONS.forEach(upgrade => {
                 const tier = clampSavedNumber(
                     upgradeTiers?.[upgrade.id],
@@ -479,6 +576,21 @@
 
             safeProfile.bestScore = clampSavedNumber(savedProfile.bestScore, 0, 1e12, 0, true);
             safeProfile.bestLevel = clampSavedNumber(savedProfile.bestLevel, 1, 10000, 1, true);
+            safeProfile.coins = clampSavedNumber(savedProfile.coins, 0, 1e12, 0, true);
+            safeProfile.ownedTanks = [...new Set([
+                'vanguard',
+                ...(Array.isArray(savedProfile.ownedTanks)
+                    ? savedProfile.ownedTanks.filter(tankId => TANK_DESIGNS[tankId])
+                    : [])
+            ])];
+            safeProfile.selectedTankId = safeProfile.ownedTanks.includes(savedProfile.selectedTankId)
+                ? savedProfile.selectedTankId
+                : 'vanguard';
+            TANK_DESIGN_LIST.forEach(tank => {
+                safeProfile.tankUpgrades[tank.id] = sanitizePermanentUpgradeTiers(
+                    savedProfile.tankUpgrades?.[tank.id]
+                );
+            });
             safeProfile.settings.soundEnabled = savedProfile.settings?.soundEnabled === true;
             safeProfile.settings.cameraMode = savedProfile.settings?.cameraMode === 'wide' ? 'wide' : 'follow';
             safeProfile.settings.controlAssist = savedProfile.settings?.controlAssist === true;
@@ -512,7 +624,14 @@
             if (!savedRun || savedRun.version !== SAVE_VERSION || savedRun.alive !== true) return null;
 
             const upgradeTiers = sanitizeUpgradeTiers(savedRun.upgradeTiers);
-            const playerStats = getStatsFromUpgradeTiers(upgradeTiers);
+            const runTankId = TANK_DESIGNS[savedRun.runTankId]
+                ? savedRun.runTankId
+                : 'vanguard';
+            const runPermanentUpgrades = sanitizePermanentUpgradeTiers(
+                savedRun.runPermanentUpgrades
+            );
+            const runBaseStats = getPermanentBaseStats(runPermanentUpgrades);
+            const playerStats = getStatsFromUpgradeTiers(upgradeTiers, runBaseStats);
             const playerHp = clampSavedNumber(savedRun.player?.hp, 0, playerStats.maxHp, 0);
             if (playerHp <= 0) return null;
 
@@ -559,6 +678,11 @@
                 xpToNext,
                 currentBiome: clampSavedNumber(savedRun.currentBiome, 0, BIOMES.length - 1, 0, true),
                 upgradeTiers,
+                runTankId,
+                runPermanentUpgrades,
+                runBaseStats,
+                comboCount: clampSavedNumber(savedRun.comboCount, 0, 1000, 0, true),
+                comboTimer: clampSavedNumber(savedRun.comboTimer, 0, 3, 0),
                 playerStats,
                 player: {
                     hp: playerHp,
@@ -608,6 +732,10 @@
                 xpToNext: state.xpToNext,
                 currentBiome: state.currentBiome,
                 upgradeTiers: { ...state.upgradeTiers },
+                runTankId: state.runTankId,
+                runPermanentUpgrades: { ...state.runPermanentUpgrades },
+                comboCount: state.comboCount,
+                comboTimer: state.comboTimer,
                 player: {
                     hp: player.hp,
                     position: {
@@ -804,6 +932,160 @@
             playUISound();
             syncHUDControls();
             saveProfile();
+        }
+
+        function formatCompactNumber(value) {
+            if (value >= 1e9) return `${(value / 1e9).toFixed(value >= 1e10 ? 0 : 1)}B`;
+            if (value >= 1e6) return `${(value / 1e6).toFixed(value >= 1e7 ? 0 : 1)}M`;
+            if (value >= 1e3) return `${(value / 1e3).toFixed(value >= 1e4 ? 0 : 1)}K`;
+            return String(Math.floor(value));
+        }
+
+        function getPermanentUpgradeCost(upgrade, currentTier) {
+            return upgrade.baseCost * (currentTier + 1);
+        }
+
+        function colorToCss(color) {
+            return `#${color.toString(16).padStart(6, '0')}`;
+        }
+
+        function unlockTank(tankId) {
+            if (state.gamePhase !== 'menu') return;
+            const tank = TANK_DESIGNS[tankId];
+            if (!tank || profile.ownedTanks.includes(tankId) || profile.coins < tank.unlockCost) return;
+            profile.coins -= tank.unlockCost;
+            profile.ownedTanks.push(tankId);
+            profile.selectedTankId = tankId;
+            saveProfile();
+            updateHUD();
+            renderGarage();
+        }
+
+        function selectTank(tankId) {
+            if (state.gamePhase !== 'menu' || !profile.ownedTanks.includes(tankId)) return;
+            profile.selectedTankId = tankId;
+            saveProfile();
+            renderGarage();
+        }
+
+        function buyPermanentUpgrade(tankId, upgradeId) {
+            if (state.gamePhase !== 'menu' || !profile.ownedTanks.includes(tankId)) return;
+            const upgrade = PERMANENT_UPGRADE_BY_ID.get(upgradeId);
+            const tankTiers = profile.tankUpgrades[tankId];
+            if (!upgrade || !tankTiers) return;
+            const currentTier = tankTiers[upgrade.id];
+            if (currentTier >= upgrade.maxTier) return;
+            const cost = getPermanentUpgradeCost(upgrade, currentTier);
+            if (profile.coins < cost) return;
+
+            profile.coins -= cost;
+            tankTiers[upgrade.id]++;
+            saveProfile();
+            updateHUD();
+            renderGarage();
+        }
+
+        function createTankPreview(tank) {
+            const preview = document.createElement('div');
+            preview.className = `tank-preview ${tank.id}`;
+            preview.style.setProperty('--tank-color', colorToCss(tank.color));
+            preview.style.setProperty('--tank-accent', colorToCss(tank.accentColor));
+            ['body', 'turret', 'barrel'].forEach(part => {
+                const element = document.createElement('span');
+                element.className = `tank-preview-${part}`;
+                preview.appendChild(element);
+            });
+            return preview;
+        }
+
+        function renderGarage() {
+            const garageList = document.getElementById('garage-list');
+            const garageCoins = document.getElementById('garage-coins');
+            garageCoins.textContent = formatCompactNumber(profile.coins);
+            garageList.replaceChildren();
+
+            TANK_DESIGN_LIST.forEach(tank => {
+                const owned = profile.ownedTanks.includes(tank.id);
+                const selected = profile.selectedTankId === tank.id;
+                const card = document.createElement('article');
+                card.className = `tank-card${selected ? ' selected' : ''}${owned ? '' : ' locked'}`;
+
+                const top = document.createElement('div');
+                top.className = 'tank-card-top';
+                top.appendChild(createTankPreview(tank));
+
+                const info = document.createElement('div');
+                info.className = 'tank-card-info';
+                const name = document.createElement('h2');
+                name.textContent = tank.name;
+                const description = document.createElement('p');
+                description.textContent = tank.description;
+                info.append(name, description);
+                top.appendChild(info);
+
+                const action = document.createElement('button');
+                action.type = 'button';
+                action.className = 'garage-action';
+                if (!owned) {
+                    action.textContent = `Unlock 💰${formatCompactNumber(tank.unlockCost)}`;
+                    action.disabled = profile.coins < tank.unlockCost;
+                    action.addEventListener('click', () => unlockTank(tank.id));
+                } else if (selected) {
+                    action.textContent = 'Equipped';
+                    action.disabled = true;
+                } else {
+                    action.textContent = 'Select';
+                    action.addEventListener('click', () => selectTank(tank.id));
+                }
+                top.appendChild(action);
+                card.appendChild(top);
+
+                const upgrades = document.createElement('div');
+                upgrades.className = 'tank-upgrades';
+                PERMANENT_UPGRADE_DEFINITIONS.forEach(upgrade => {
+                    const tier = profile.tankUpgrades[tank.id][upgrade.id];
+                    const cost = tier < upgrade.maxTier
+                        ? getPermanentUpgradeCost(upgrade, tier)
+                        : 0;
+                    const upgradeBox = document.createElement('div');
+                    upgradeBox.className = 'tank-upgrade';
+                    const label = document.createElement('strong');
+                    label.textContent = upgrade.name;
+                    const tierText = document.createElement('span');
+                    tierText.textContent = `${tier}/${upgrade.maxTier}`;
+                    const value = document.createElement('small');
+                    value.textContent = tier > 0 ? `+${upgrade.amount * tier}` : 'Base';
+                    const buyButton = document.createElement('button');
+                    buyButton.type = 'button';
+                    buyButton.disabled = !owned || tier >= upgrade.maxTier || profile.coins < cost;
+                    buyButton.textContent = !owned
+                        ? 'Locked'
+                        : tier >= upgrade.maxTier
+                            ? 'Max'
+                            : `💰${formatCompactNumber(cost)}`;
+                    buyButton.addEventListener('click', () =>
+                        buyPermanentUpgrade(tank.id, upgrade.id)
+                    );
+                    upgradeBox.append(label, tierText, value, buyButton);
+                    upgrades.appendChild(upgradeBox);
+                });
+                card.appendChild(upgrades);
+                garageList.appendChild(card);
+            });
+        }
+
+        function openGarage() {
+            if (state.gamePhase !== 'menu') return;
+            state.garageOpen = true;
+            renderGarage();
+            setScreenVisibility('start-screen', false);
+            setScreenVisibility('garage-screen', true);
+        }
+
+        function closeGarage() {
+            state.garageOpen = false;
+            setScreenVisibility('garage-screen', false);
+            setScreenVisibility('start-screen', true);
         }
 
         function openSettings() {
@@ -1569,10 +1851,11 @@
         // HIGH-FIDELITY TANK CLASS
         // ============================================
         class Tank {
-            constructor(color, isPlayer = false, type = 'soldier') {
+            constructor(color, isPlayer = false, type = 'soldier', designId = 'vanguard') {
                 this.mesh = new THREE.Group();
                 this.isPlayer = isPlayer;
                 this.type = type;
+                this.designId = isPlayer && TANK_DESIGNS[designId] ? designId : 'vanguard';
                 this.typeData = isPlayer ? null : ENEMY_TYPES[type];
 
                 const scale = isPlayer ? 1 : (this.typeData?.size || 1);
@@ -1711,6 +1994,57 @@
                     antenna.position.set(-0.5 * scale, 1.3 * scale, -0.6 * scale);
                     antenna.rotation.z = 0.15;
                     this.turretPivot.add(antenna);
+                }
+
+                // Cosmetic player designs. These meshes do not change hitboxes,
+                // movement, damage, health, or any other base behavior.
+                if (isPlayer && this.designId !== 'vanguard') {
+                    const design = TANK_DESIGNS[this.designId];
+                    const accentMat = new THREE.MeshStandardMaterial({
+                        color: design.accentColor,
+                        roughness: 0.35,
+                        metalness: 0.7
+                    });
+
+                    if (this.designId === 'ember') {
+                        [-1, 1].forEach(side => {
+                            const sideArmor = new THREE.Mesh(
+                                new THREE.BoxGeometry(0.22, 0.55, 2.8),
+                                accentMat
+                            );
+                            sideArmor.position.set(side * 1.9, 0.82, 0.1);
+                            sideArmor.rotation.z = side * -0.08;
+                            sideArmor.castShadow = true;
+                            this.mesh.add(sideArmor);
+
+                            const turretFin = new THREE.Mesh(
+                                new THREE.BoxGeometry(0.25, 0.32, 1.5),
+                                accentMat
+                            );
+                            turretFin.position.set(side * 0.92, 0.58, 0.05);
+                            turretFin.castShadow = true;
+                            this.turretPivot.add(turretFin);
+                        });
+                    } else if (this.designId === 'azure') {
+                        const shield = new THREE.Mesh(
+                            new THREE.BoxGeometry(2.75, 0.75, 0.28),
+                            accentMat
+                        );
+                        shield.position.set(0, 0.9, 2.22);
+                        shield.rotation.x = -0.2;
+                        shield.castShadow = true;
+                        this.mesh.add(shield);
+
+                        [-1, 1].forEach(side => {
+                            const turretPod = new THREE.Mesh(
+                                new THREE.BoxGeometry(0.58, 0.58, 1.45),
+                                accentMat
+                            );
+                            turretPod.position.set(side * 1.02, 0.55, 0.05);
+                            turretPod.castShadow = true;
+                            this.turretPivot.add(turretPod);
+                        });
+                    }
                 }
 
                 // Player indicator ring
@@ -1879,17 +2213,23 @@
         // ============================================
         // ENHANCED PROJECTILES - Glowing Plasma Bolts
         // ============================================
-        function createBulletVisual(bulletColor) {
+        function createProjectileGeometry(style, size) {
+            if (style === 'bolt') return new THREE.OctahedronGeometry(size, 0);
+            if (style === 'crystal') return new THREE.TetrahedronGeometry(size, 0);
+            return new THREE.SphereGeometry(size);
+        }
+
+        function createBulletVisual(bulletColor, projectileStyle = 'orb') {
             const bulletGroup = new THREE.Group();
 
             const core = new THREE.Mesh(
-                new THREE.SphereGeometry(0.3),
+                createProjectileGeometry(projectileStyle, projectileStyle === 'orb' ? 0.3 : 0.38),
                 new THREE.MeshBasicMaterial({ color: 0xffffff })
             );
             bulletGroup.add(core);
 
             const innerGlow = new THREE.Mesh(
-                new THREE.SphereGeometry(0.45),
+                createProjectileGeometry(projectileStyle, 0.45),
                 new THREE.MeshBasicMaterial({
                     color: bulletColor,
                     transparent: true,
@@ -1899,7 +2239,7 @@
             bulletGroup.add(innerGlow);
 
             const outerGlow = new THREE.Mesh(
-                new THREE.SphereGeometry(0.65),
+                createProjectileGeometry(projectileStyle, 0.65),
                 new THREE.MeshBasicMaterial({
                     color: bulletColor,
                     transparent: true,
@@ -1930,15 +2270,18 @@
                 light,
                 trail,
                 color: bulletColor,
+                projectileStyle,
+                poolKey: `${bulletColor}-${projectileStyle}`,
                 previousPosition: new THREE.Vector3()
             };
         }
 
-        function acquireBulletVisual(bulletColor) {
-            const poolIndex = bulletPool.findIndex(bullet => bullet.color === bulletColor);
+        function acquireBulletVisual(bulletColor, projectileStyle = 'orb') {
+            const poolKey = `${bulletColor}-${projectileStyle}`;
+            const poolIndex = bulletPool.findIndex(bullet => bullet.poolKey === poolKey);
             const bullet = poolIndex >= 0
                 ? bulletPool.splice(poolIndex, 1)[0]
-                : createBulletVisual(bulletColor);
+                : createBulletVisual(bulletColor, projectileStyle);
 
             bullet.group.scale.set(1, 1, 1);
             bullet.innerGlow.scale.set(1, 1, 1);
@@ -1990,9 +2333,15 @@
             const spreadAngle = 0.12;
 
             for (let i = 0; i < shotCount; i++) {
-                const bulletColor = source.isPlayer ? 0x00ffff : (source.type === 'healer' ? 0x00ff00 : 0xff4444);
+                const playerDesign = source.isPlayer
+                    ? TANK_DESIGNS[source.designId] || TANK_DESIGNS.vanguard
+                    : null;
+                const bulletColor = playerDesign
+                    ? playerDesign.projectileColor
+                    : source.type === 'healer' ? 0x00ff00 : 0xff4444;
+                const projectileStyle = playerDesign ? playerDesign.projectileStyle : 'orb';
 
-                const bullet = acquireBulletVisual(bulletColor);
+                const bullet = acquireBulletVisual(bulletColor, projectileStyle);
                 const bulletGroup = bullet.group;
 
                 // Position at muzzle
@@ -2360,9 +2709,11 @@
             state.isPlaying = false;
             state.gamePhase = 'menu';
             state.settingsOpen = false;
+            state.garageOpen = false;
             clearInputState();
             clearCombatScene();
             setScreenVisibility('upgrade-choice-screen', false);
+            setScreenVisibility('garage-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('pause-screen', false);
             setScreenVisibility('game-over-screen', false);
@@ -2418,25 +2769,42 @@
             state.lastAutoSaveTime = now;
             state.enemiesIntroduced = new Set();
             state.upgradeTiers = createDefaultUpgradeTiers();
-            state.playerStats = getStatsFromUpgradeTiers(state.upgradeTiers);
+            state.runTankId = profile.ownedTanks.includes(profile.selectedTankId)
+                ? profile.selectedTankId
+                : 'vanguard';
+            state.runPermanentUpgrades = sanitizePermanentUpgradeTiers(
+                profile.tankUpgrades[state.runTankId]
+            );
+            state.runBaseStats = getPermanentBaseStats(state.runPermanentUpgrades);
+            state.playerStats = getStatsFromUpgradeTiers(
+                state.upgradeTiers,
+                state.runBaseStats
+            );
+            state.comboCount = 0;
+            state.comboTimer = 0;
+            state.comboMultiplier = 1;
             state.pendingUpgradeCount = 0;
             state.currentUpgradeChoices = [];
             state.targetEnemy = null;
             state.cameraShake = 0;
             state.settingsOpen = false;
+            state.garageOpen = false;
             clearInputState();
 
-            player = new Tank(0x22c55e, true);
+            const selectedTank = TANK_DESIGNS[state.runTankId];
+            player = new Tank(selectedTank.color, true, 'soldier', state.runTankId);
             loadBiome(0);
             updateHUD();
 
             setScreenVisibility('upgrade-choice-screen', false);
+            setScreenVisibility('garage-screen', false);
             setScreenVisibility('start-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('game-over-screen', false);
             setScreenVisibility('pause-screen', false);
             setPauseUIVisible(true);
             syncHUDControls();
+            updateComboIndicator();
             saveActiveRun();
         }
 
@@ -2455,13 +2823,20 @@
             state.xpToNext = savedRun.xpToNext;
             state.currentBiome = savedRun.currentBiome;
             state.upgradeTiers = { ...savedRun.upgradeTiers };
+            state.runTankId = savedRun.runTankId;
+            state.runPermanentUpgrades = { ...savedRun.runPermanentUpgrades };
+            state.runBaseStats = { ...savedRun.runBaseStats };
             state.playerStats = { ...savedRun.playerStats };
+            state.comboCount = savedRun.comboTimer > 0 ? savedRun.comboCount : 0;
+            state.comboTimer = savedRun.comboTimer;
+            state.comboMultiplier = getComboMultiplier(state.comboCount);
             state.pendingUpgradeCount = savedRun.pendingUpgradeCount;
             state.currentUpgradeChoices = [...savedRun.currentUpgradeChoices];
             state.enemiesIntroduced = new Set(savedRun.enemiesIntroduced);
             state.isPlaying = true;
             state.gamePhase = 'playing';
             state.settingsOpen = false;
+            state.garageOpen = false;
             state.targetEnemy = null;
             state.cameraShake = 0;
             state.lastFireTime = now - CONFIG.fireRate;
@@ -2470,7 +2845,8 @@
             state.lastAutoSaveTime = now;
             clearInputState();
 
-            player = new Tank(0x22c55e, true);
+            const savedTank = TANK_DESIGNS[state.runTankId];
+            player = new Tank(savedTank.color, true, 'soldier', state.runTankId);
             loadBiome(savedRun.currentBiome);
             player.hp = savedRun.player.hp;
             player.maxHp = state.playerStats.maxHp;
@@ -2499,11 +2875,13 @@
                 enemies.push(enemy);
             });
 
+            setScreenVisibility('garage-screen', false);
             setScreenVisibility('start-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('game-over-screen', false);
             setScreenVisibility('pause-screen', false);
             updateHUD();
+            updateComboIndicator();
 
             if (state.pendingUpgradeCount > 0) {
                 beginNextUpgradeChoice(state.currentUpgradeChoices);
@@ -2670,6 +3048,44 @@
             setTimeout(() => intro.classList.remove('show'), 3000);
         }
 
+        function getComboMultiplier(comboCount) {
+            return Math.min(3, 1 + Math.max(0, comboCount - 1) * 0.2);
+        }
+
+        function updateComboIndicator() {
+            const indicator = document.getElementById('combo-indicator');
+            const active = state.comboCount >= 2 && state.comboTimer > 0;
+            indicator.classList.toggle('show', active);
+            document.getElementById('combo-count').textContent = state.comboCount;
+            document.getElementById('combo-multiplier').textContent =
+                state.comboMultiplier.toFixed(1);
+        }
+
+        function updateCombo(dt) {
+            if (state.comboTimer <= 0) return;
+            state.comboTimer = Math.max(0, state.comboTimer - dt);
+            if (state.comboTimer === 0) {
+                state.comboCount = 0;
+                state.comboMultiplier = 1;
+            }
+            updateComboIndicator();
+        }
+
+        function awardEnemyKill(basePoints) {
+            state.comboCount = state.comboTimer > 0 ? state.comboCount + 1 : 1;
+            state.comboTimer = 3;
+            state.comboMultiplier = getComboMultiplier(state.comboCount);
+            const scoreReward = Math.floor(basePoints * state.comboMultiplier);
+            const baseCoins = Math.max(1, Math.floor(basePoints / 10));
+            const coinReward = Math.max(1, Math.floor(baseCoins * state.comboMultiplier));
+            state.score += scoreReward;
+            profile.coins += coinReward;
+            saveProfile();
+            updateComboIndicator();
+            updateHUD();
+            return { scoreReward, coinReward };
+        }
+
         function spawnEnemy() {
             if (!state.isPlaying || !player) return;
 
@@ -2687,7 +3103,7 @@
             enemies.push(enemy);
         }
 
-        function showScorePopup(x, z, points) {
+        function showScorePopup(x, z, points, coins = 0) {
             const pos = new THREE.Vector3(x, 3, z);
             pos.project(camera);
 
@@ -2696,7 +3112,7 @@
 
             const popup = document.createElement('div');
             popup.className = 'score-popup';
-            popup.textContent = '+' + points;
+            popup.textContent = `+${points}  💰+${coins}`;
             popup.style.left = screenX + 'px';
             popup.style.top = screenY + 'px';
             document.body.appendChild(popup);
@@ -2706,6 +3122,8 @@
 
         function updatePhysics(dt) {
             if (!player || player.isDead) return;
+
+            updateCombo(dt);
 
             // Player movement
             player.move(dt, new THREE.Vector2(state.input.x, state.input.y));
@@ -2880,9 +3298,14 @@
 
                                     if (enemy.isDead) {
                                         const points = ENEMY_TYPES[enemy.type]?.points || 100;
-                                        state.score += points;
+                                        const rewards = awardEnemyKill(points);
                                         addXP(points / 2);
-                                        showScorePopup(enemy.mesh.position.x, enemy.mesh.position.z, points);
+                                        showScorePopup(
+                                            enemy.mesh.position.x,
+                                            enemy.mesh.position.z,
+                                            rewards.scoreReward,
+                                            rewards.coinReward
+                                        );
                                         enemies.splice(j, 1);
                                     }
                                     hit = true;
@@ -3052,7 +3475,8 @@
         }
 
         function updateHUD() {
-            document.getElementById('score').textContent = state.score;
+            document.getElementById('score').textContent = formatCompactNumber(state.score);
+            document.getElementById('coins').textContent = formatCompactNumber(profile.coins);
             document.getElementById('level').textContent = state.level;
 
             const xpPct = (state.xp / state.xpToNext) * 100;
@@ -3080,6 +3504,10 @@
             state.isPlaying = false;
             state.gamePhase = 'gameover';
             state.settingsOpen = false;
+            state.garageOpen = false;
+            state.comboCount = 0;
+            state.comboTimer = 0;
+            state.comboMultiplier = 1;
             state.pendingUpgradeCount = 0;
             state.currentUpgradeChoices = [];
             clearInputState();
@@ -3088,10 +3516,12 @@
             document.getElementById('final-score').textContent = state.score;
             document.getElementById('final-level').textContent = state.level;
             setScreenVisibility('upgrade-choice-screen', false);
+            setScreenVisibility('garage-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('pause-screen', false);
             setScreenVisibility('game-over-screen', true);
             setPauseUIVisible(false);
+            updateComboIndicator();
             syncHUDControls();
         }
 
@@ -3252,6 +3682,16 @@
             continueSavedRun();
         });
 
+        document.getElementById('btn-garage').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openGarage();
+        });
+
+        document.getElementById('btn-close-garage').addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeGarage();
+        });
+
         document.getElementById('btn-start').addEventListener('click', (e) => {
             e.stopPropagation();
             startGame();
@@ -3328,6 +3768,10 @@
                 }
             },
             handleBackButton() {
+                if (state.garageOpen) {
+                    closeGarage();
+                    return true;
+                }
                 if (state.gamePhase === 'choosing-upgrade') return true;
                 if (state.settingsOpen) {
                     closeSettings();
@@ -3354,3 +3798,5 @@
         setPauseUIVisible(false);
         syncHUDControls();
         init();
+        updateHUD();
+        updateComboIndicator();

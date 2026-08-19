@@ -142,9 +142,20 @@ function createHarness(storageSeed = {}) {
       continueSavedRun,
       saveActiveRun,
       clearActiveRunSave,
+      sanitizeProfile,
       sanitizeActiveRun,
       addXP,
       applyUpgradeChoice,
+      awardEnemyKill,
+      updateCombo,
+      openGarage,
+      closeGarage,
+      renderGarage,
+      unlockTank,
+      selectTank,
+      buyPermanentUpgrade,
+      tankDesigns: () => TANK_DESIGNS,
+      permanentUpgradeDefinitions: () => PERMANENT_UPGRADE_DEFINITIONS,
       pauseGame,
       resumeGame,
       openSettings,
@@ -593,6 +604,92 @@ test('pending upgrade choices survive a page reload', () => {
     3
   );
   secondSession.dom.window.close();
+});
+
+test('garage unlocks equal-base tanks and keeps upgrades separate', () => {
+  const harness = createHarness();
+  const { api, window } = harness;
+  api.profile().coins = 5000;
+  api.openGarage();
+
+  assert.equal(window.document.querySelectorAll('.tank-card').length, 3);
+  assert.equal(api.profile().ownedTanks.length, 1);
+  assert.equal(api.tankDesigns().vanguard.unlockCost, 0);
+  assert.notEqual(api.tankDesigns().vanguard.color, api.tankDesigns().ember.color);
+  assert.notEqual(
+    api.tankDesigns().vanguard.projectileColor,
+    api.tankDesigns().ember.projectileColor
+  );
+
+  api.unlockTank('ember');
+  assert.equal(api.profile().coins, 4250);
+  assert.equal(api.profile().selectedTankId, 'ember');
+  assert.equal(api.profile().ownedTanks.includes('ember'), true);
+
+  api.buyPermanentUpgrade('ember', 'maxHp');
+  assert.equal(api.profile().coins, 4130);
+  assert.equal(api.profile().tankUpgrades.ember.maxHp, 1);
+  assert.equal(api.profile().tankUpgrades.vanguard.maxHp, 0);
+
+  api.closeGarage();
+  api.startGame();
+  assert.equal(api.state().runTankId, 'ember');
+  assert.equal(api.player().designId, 'ember');
+  assert.equal(api.state().runBaseStats.maxHp, 105);
+  assert.equal(api.state().playerStats.maxHp, 105);
+  const activeSave = JSON.parse(window.localStorage.getItem('tank_realms_active_run_v1'));
+  assert.equal(activeSave.runTankId, 'ember');
+  assert.equal(activeSave.runPermanentUpgrades.maxHp, 1);
+  api.shoot(api.player());
+  assert.equal(api.bullets()[0].projectileStyle, 'bolt');
+
+  const coinsDuringRun = api.profile().coins;
+  api.buyPermanentUpgrade('ember', 'damage');
+  assert.equal(api.profile().coins, coinsDuringRun);
+  assert.equal(api.profile().tankUpgrades.ember.damage, 0);
+
+  const savedProfile = window.localStorage.getItem('tank_realms_profile_v1');
+  harness.dom.window.close();
+  const reloaded = createHarness({ tank_realms_profile_v1: savedProfile });
+  assert.equal(reloaded.api.profile().ownedTanks.includes('ember'), true);
+  assert.equal(reloaded.api.profile().selectedTankId, 'ember');
+  assert.equal(reloaded.api.profile().tankUpgrades.ember.maxHp, 1);
+  assert.equal(reloaded.api.profile().coins, coinsDuringRun);
+  reloaded.dom.window.close();
+});
+
+test('combo multiplies score and coins but not XP', () => {
+  const harness = createHarness();
+  const { api, window } = harness;
+  api.startGame();
+  const startingCoins = api.profile().coins;
+  const startingXp = api.state().xp;
+
+  const first = api.awardEnemyKill(100);
+  assert.deepEqual({ ...first }, { scoreReward: 100, coinReward: 10 });
+  api.updateCombo(1);
+  const second = api.awardEnemyKill(100);
+  assert.deepEqual({ ...second }, { scoreReward: 120, coinReward: 12 });
+  assert.equal(api.state().score, 220);
+  assert.equal(api.profile().coins, startingCoins + 22);
+  assert.equal(api.state().xp, startingXp);
+  assert.equal(api.state().comboCount, 2);
+  assert.equal(api.state().comboMultiplier, 1.2);
+  assert.equal(
+    window.document.getElementById('combo-indicator').classList.contains('show'),
+    true
+  );
+
+  for (let i = 0; i < 20; i++) api.awardEnemyKill(100);
+  assert.equal(api.state().comboMultiplier, 3);
+  api.updateCombo(3.1);
+  assert.equal(api.state().comboCount, 0);
+  assert.equal(api.state().comboMultiplier, 1);
+  assert.equal(
+    window.document.getElementById('combo-indicator').classList.contains('show'),
+    false
+  );
+  harness.dom.window.close();
 });
 
 test('corrupt and outdated save data cannot block startup', () => {

@@ -48,6 +48,17 @@ test('common Android portrait widths have non-overlapping HUD and control budget
   }
 });
 
+test('garage and combo UI are present in the portrait-safe layout', () => {
+  assert.match(html, /id="btn-garage"/);
+  assert.match(html, /id="garage-screen"/);
+  assert.match(html, /id="garage-list"/);
+  assert.match(html, /id="combo-indicator"/);
+  assert.match(html, /id="coins"/);
+  assert.match(css, /\.garage-panel/);
+  assert.match(css, /\.tank-upgrades/);
+  assert.match(css, /#combo-indicator/);
+});
+
 test('touch controls begin below the compact HUD', () => {
   assert.match(gameSource, /touchControlTopRatio: 0\.3/);
   assert.match(gameSource, /touch\.clientY >= getTouchControlTop\(\)/);

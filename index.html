@@ -15,7 +15,10 @@
     <div id="hud-layer">
         <div id="hud-top">
             <div class="hud-panel" id="hud-score-panel">
-                <div>🏆 <span id="score">0</span></div>
+                <div class="hud-primary-row">
+                    <span>🏆 <span id="score">0</span></span>
+                    <span>💰 <span id="coins">0</span></span>
+                </div>
                 <div class="stats-panel">
                     <span>⚡ <span id="stat-speed">100</span>%</span>
                     <span>💥 <span id="stat-damage">100</span>%</span>
@@ -52,6 +55,7 @@
 
 
     <div class="biome-indicator" id="biome-name">Forest Realm</div>
+    <div id="combo-indicator" aria-live="polite">🔥 Combo <strong id="combo-count">2</strong> • ×<span id="combo-multiplier">1.2</span></div>
 
     <div id="joystick-base">
         <div id="joystick-knob"></div>
@@ -71,6 +75,7 @@
         <h1>⚔️ TANK REALMS</h1>
         <h2>Conquer Every Biome</h2>
         <button type="button" class="btn btn-continue" id="btn-continue">Continue Run</button>
+        <button type="button" class="btn btn-garage" id="btn-garage">Garage</button>
         <button type="button" class="btn" id="btn-start">Start Adventure</button>
         <div class="game-info">
             Lower left: Move • Lower right: Hold to fire<br>
@@ -93,6 +98,20 @@
     </div>
 
 
+
+    <div id="garage-screen" class="screen hidden">
+        <div class="garage-panel">
+            <div class="garage-header">
+                <div>
+                    <h1>Garage</h1>
+                    <p>Equal base stats • Separate upgrades • New adventures use your latest setup</p>
+                </div>
+                <div class="garage-coins">💰 <span id="garage-coins">0</span></div>
+            </div>
+            <div id="garage-list" class="garage-list"></div>
+            <button type="button" class="btn" id="btn-close-garage">Back to Menu</button>
+        </div>
+    </div>
 
     <div id="settings-screen" class="screen hidden">
         <div class="settings-panel">

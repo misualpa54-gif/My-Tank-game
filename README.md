@@ -4,18 +4,19 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phase 1 stabilized the game, Phase 2 created the offline APK, Phase 3 optimized rendering, Phase 4 normalized timing/collision, and Phase 5 added the portrait HUD. Phase 6 now adds reliable progress and temporary upgrade choices:
+Phases 1–6 stabilized, packaged, optimized, normalized, adapted, and added reliable continuation/upgrades. Phase 7 now adds the approved permanent economy and tank collection:
 
-- permanent profile and living-run data use separate versioned local saves;
-- a Continue Run button appears only for a valid living run;
-- player health/position, enemies, XP, level, biome, and temporary upgrades restore after closing the app;
-- autosave runs every five seconds and on pause, menu exit, upgrade choice, page close, and Android backgrounding;
-- defeat clears temporary run progress but preserves best score, best level, and settings;
-- corrupt, outdated, edited, or impossible save values are safely rejected or clamped;
-- every level-up freezes combat and shows three unique available choices;
-- speed, damage, fire rate, max health, regeneration, armor, and triple shot have safe tier caps;
-- the old fixed automatic upgrade schedule is removed so each level grants one chosen upgrade;
-- all earlier performance, consistency, portrait, offline, and Android behavior remains active.
+- connected kills within three seconds increase score and coin rewards by +0.2, capped at ×3;
+- XP remains based on the original enemy value and is never combo-multiplied;
+- permanent coins save after every kill;
+- the menu-only garage contains Verdant Vanguard, Ember Warden, and Azure Bastion;
+- all three tanks have equal unupgraded gameplay stats;
+- body details, colors, projectile colors, and projectile shapes are visually distinct without changing hitboxes or projectile behavior;
+- Ember Warden costs 750 coins and Azure Bastion costs 1,800 coins;
+- Hull, Damage, Speed, Armor, and Fire rate have five separately purchased tiers for every tank;
+- garage purchases are rejected during active combat and affect the next new adventure;
+- coins, unlocks, selection, and per-tank tiers are added safely to the existing versioned profile;
+- all earlier saving, upgrade-choice, portrait, performance, consistency, offline, and Android behavior remains active.
 
 Detailed reports are in:
 
@@ -23,8 +24,9 @@ Detailed reports are in:
 - `docs/phase4-consistency-report.md`
 - `docs/phase5-portrait-layout-report.md`
 - `docs/phase6-save-upgrade-report.md`
+- `docs/phase7-garage-economy-report.md`
 
-Combo rewards, coins, the garage, three tank designs, permanent per-tank upgrades, quality levels, and complete audio will be built in later phases.
+Low/Medium/High quality levels and the complete arcade sci-fi audio set remain for later phases.
 
 ## Project structure
 
