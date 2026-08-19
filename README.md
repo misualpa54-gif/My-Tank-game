@@ -4,19 +4,16 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phases 1–6 stabilized, packaged, optimized, normalized, adapted, and added reliable continuation/upgrades. Phase 7 now adds the approved permanent economy and tank collection:
+Phases 1–7 now provide the stabilized offline APK, optimized rendering, consistent timing/collision, portrait controls, continuation, choice upgrades, combo economy, and three-tank garage. Phase 8 adds player-controlled rendering quality:
 
-- connected kills within three seconds increase score and coin rewards by +0.2, capped at ×3;
-- XP remains based on the original enemy value and is never combo-multiplied;
-- permanent coins save after every kill;
-- the menu-only garage contains Verdant Vanguard, Ember Warden, and Azure Bastion;
-- all three tanks have equal unupgraded gameplay stats;
-- body details, colors, projectile colors, and projectile shapes are visually distinct without changing hitboxes or projectile behavior;
-- Ember Warden costs 750 coins and Azure Bastion costs 1,800 coins;
-- Hull, Damage, Speed, Armor, and Fire rate have five separately purchased tiers for every tank;
-- garage purchases are rejected during active combat and affect the next new adventure;
-- coins, unlocks, selection, and per-tank tiers are added safely to the existing versioned profile;
-- all earlier saving, upgrade-choice, portrait, performance, consistency, offline, and Android behavior remains active.
+- Low, Medium, and High cycle from the settings panel and save permanently;
+- Low uses pixel ratio 0.8, basic 512 shadows, 35% distant/ambient detail, 50% effect particles, and no optional point lights;
+- Medium is the default with pixel ratio 1.0, PCF shadows, 65–67% distant/ambient detail, 75% effect particles, and optional lights;
+- High retains full Phase 7 detail, soft shadows, all particles/decorations/lights, and pixel ratio up to 1.25;
+- foreground trees, rocks, colliders, enemies, stats, spawn rules, hitboxes, XP, score, coins, and garage prices never change with quality;
+- quality switches existing instanced scene counts without rebuilding or moving the biome;
+- older profiles safely default to Medium;
+- all earlier saving, upgrade, portrait, performance, consistency, economy, offline, and Android behavior remains active.
 
 Detailed reports are in:
 
@@ -25,8 +22,9 @@ Detailed reports are in:
 - `docs/phase5-portrait-layout-report.md`
 - `docs/phase6-save-upgrade-report.md`
 - `docs/phase7-garage-economy-report.md`
+- `docs/phase8-quality-report.md`
 
-Low/Medium/High quality levels and the complete arcade sci-fi audio set remain for later phases.
+The complete arcade sci-fi audio set remains for the next phase. Final-release signing, icons, splash artwork, and store work are intentionally not part of Phase 8.
 
 ## Project structure
 

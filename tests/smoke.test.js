@@ -128,6 +128,7 @@ function createHarness(storageSeed = {}) {
       environmentColliders: () => environmentColliders,
       environmentObjects: () => environmentObjects,
       environmentParticles: () => environmentParticles,
+      environmentParticleBatches: () => environmentParticleBatches,
       environmentRoots: () => [
         ...environmentObjects,
         ...environmentParticleBatches,
@@ -154,6 +155,10 @@ function createHarness(storageSeed = {}) {
       unlockTank,
       selectTank,
       buyPermanentUpgrade,
+      toggleQualityMode,
+      applyQualitySettings,
+      getQualityPreset,
+      getQualityAdjustedCount,
       tankDesigns: () => TANK_DESIGNS,
       permanentUpgradeDefinitions: () => PERMANENT_UPGRADE_DEFINITIONS,
       pauseGame,
@@ -211,7 +216,7 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(state.cameraMode, 'follow');
     assert.equal(state.controlAssist, false);
     assert.equal(harness.intervals.length, 0);
-    assert.equal(api.renderer().pixelRatio, 1.25);
+    assert.equal(api.renderer().pixelRatio, 1);
     assert.equal(harness.animationFrames.length, 1);
   });
 
@@ -226,6 +231,37 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
       'forest should instance trees, background rocks, grass, and environment particles'
     );
     assert.equal(api.environmentColliders().length, 80);
+  });
+
+  await t.test('applies persistent Low, Medium, and High quality budgets', () => {
+    assert.equal(api.state().qualityMode, 'medium');
+    assert.equal(api.renderer().pixelRatio, 1);
+    const colliderCount = api.environmentColliders().length;
+    const ambientBatch = api.environmentParticleBatches()[0];
+    const mediumAmbientCount = ambientBatch.count;
+    assert.ok(mediumAmbientCount < ambientBatch.userData.fullInstanceCount);
+
+    api.toggleQualityMode();
+    assert.equal(api.state().qualityMode, 'high');
+    assert.equal(api.renderer().pixelRatio, 1.25);
+    assert.equal(ambientBatch.count, ambientBatch.userData.fullInstanceCount);
+
+    api.toggleQualityMode();
+    assert.equal(api.state().qualityMode, 'low');
+    assert.equal(api.renderer().pixelRatio, 0.8);
+    assert.ok(ambientBatch.count < mediumAmbientCount);
+    assert.equal(api.environmentColliders().length, colliderCount);
+    assert.equal(api.getQualityAdjustedCount(10), 5);
+    const lowBullet = api.acquireBulletVisual(0x00ffff);
+    assert.equal(lowBullet.light.visible, false);
+    api.releaseBulletVisual(lowBullet);
+
+    api.toggleQualityMode();
+    assert.equal(api.state().qualityMode, 'medium');
+    assert.equal(
+      JSON.parse(window.localStorage.getItem('tank_realms_profile_v1')).settings.qualityMode,
+      'medium'
+    );
   });
 
   await t.test('disposes old biome geometries, materials, and background texture', () => {
@@ -717,7 +753,8 @@ test('saved settings load into a new session', () => {
       settings: {
         soundEnabled: true,
         cameraMode: 'wide',
-        controlAssist: true
+        controlAssist: true,
+        qualityMode: 'low'
       }
     })
   });
@@ -725,6 +762,8 @@ test('saved settings load into a new session', () => {
   assert.equal(harness.api.state().soundEnabled, true);
   assert.equal(harness.api.state().cameraMode, 'wide');
   assert.equal(harness.api.state().controlAssist, true);
+  assert.equal(harness.api.state().qualityMode, 'low');
+  assert.equal(harness.api.renderer().pixelRatio, 0.8);
   assert.equal(harness.api.profile().bestScore, 500);
   assert.equal(harness.api.profile().bestLevel, 6);
   harness.dom.window.close();

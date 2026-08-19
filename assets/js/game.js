@@ -215,6 +215,40 @@
             touchControlTopRatio: 0.3
         };
 
+        const QUALITY_PRESETS = {
+            low: {
+                label: 'Low',
+                maxPixelRatio: 0.8,
+                shadowType: THREE.BasicShadowMap,
+                shadowMapSize: 512,
+                backgroundDecorationRatio: 0.35,
+                ambientParticleRatio: 0.35,
+                effectParticleRatio: 0.5,
+                dynamicLights: false
+            },
+            medium: {
+                label: 'Medium',
+                maxPixelRatio: 1,
+                shadowType: THREE.PCFShadowMap,
+                shadowMapSize: 1024,
+                backgroundDecorationRatio: 0.65,
+                ambientParticleRatio: 0.67,
+                effectParticleRatio: 0.75,
+                dynamicLights: true
+            },
+            high: {
+                label: 'High',
+                maxPixelRatio: 1.25,
+                shadowType: THREE.PCFSoftShadowMap,
+                shadowMapSize: 1024,
+                backgroundDecorationRatio: 1,
+                ambientParticleRatio: 1,
+                effectParticleRatio: 1,
+                dynamicLights: true
+            }
+        };
+        const QUALITY_ORDER = ['low', 'medium', 'high'];
+
         const BASELINE_FPS = 60;
 
         function getFrameEquivalentAlpha(alphaAt60Fps, dt) {
@@ -316,7 +350,8 @@
                 settings: {
                     soundEnabled: false,
                     cameraMode: 'follow',
-                    controlAssist: false
+                    controlAssist: false,
+                    qualityMode: 'medium'
                 }
             };
         }
@@ -346,6 +381,7 @@
             soundEnabled: false,
             cameraMode: 'follow',
             controlAssist: false,
+            qualityMode: 'medium',
             settingsOpen: false,
             garageOpen: false,
             upgradeTiers: createDefaultUpgradeTiers(),
@@ -450,6 +486,91 @@
             ambientLight = null;
             dirLight = null;
             hemisphereLight = null;
+        }
+
+        function getQualityPreset() {
+            return QUALITY_PRESETS[state.qualityMode] || QUALITY_PRESETS.medium;
+        }
+
+        function getQualityAdjustedCount(fullCount, minimum = 1) {
+            return Math.max(
+                minimum,
+                Math.round(fullCount * getQualityPreset().effectParticleRatio)
+            );
+        }
+
+        function configureQualityOptionalLight(light) {
+            light.userData.qualityOptionalLight = true;
+            light.visible = getQualityPreset().dynamicLights;
+            return light;
+        }
+
+        function applySceneQualityVisibility() {
+            const preset = getQualityPreset();
+            environmentObjects.forEach(object => {
+                if (object.userData.qualityCategory === 'background-decoration') {
+                    object.count = Math.max(
+                        1,
+                        Math.round(
+                            object.userData.fullInstanceCount * preset.backgroundDecorationRatio
+                        )
+                    );
+                }
+            });
+            environmentParticleBatches.forEach(batch => {
+                batch.count = Math.max(
+                    1,
+                    Math.round(batch.userData.fullInstanceCount * preset.ambientParticleRatio)
+                );
+            });
+            if (scene) {
+                scene.traverse(object => {
+                    if (object.userData?.qualityOptionalLight) {
+                        object.visible = preset.dynamicLights;
+                    }
+                });
+            }
+        }
+
+        function applyQualitySettings() {
+            const preset = getQualityPreset();
+            if (renderer) {
+                renderer.setPixelRatio(
+                    Math.min(window.devicePixelRatio || 1, preset.maxPixelRatio)
+                );
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = preset.shadowType;
+            }
+            if (dirLight) {
+                if (dirLight.shadow.map) {
+                    dirLight.shadow.map.dispose();
+                    dirLight.shadow.map = null;
+                }
+                dirLight.shadow.mapSize.set(
+                    preset.shadowMapSize,
+                    preset.shadowMapSize
+                );
+            }
+            applySceneQualityVisibility();
+            if (scene) {
+                scene.traverse(object => {
+                    if (!object.isMesh) return;
+                    const materials = Array.isArray(object.material)
+                        ? object.material
+                        : [object.material];
+                    materials.filter(Boolean).forEach(material => {
+                        material.needsUpdate = true;
+                    });
+                });
+            }
+        }
+
+        function toggleQualityMode() {
+            const currentIndex = QUALITY_ORDER.indexOf(state.qualityMode);
+            state.qualityMode = QUALITY_ORDER[(currentIndex + 1) % QUALITY_ORDER.length];
+            applyQualitySettings();
+            syncHUDControls();
+            saveProfile();
         }
 
         function getTouchControlTop() {
@@ -594,6 +715,9 @@
             safeProfile.settings.soundEnabled = savedProfile.settings?.soundEnabled === true;
             safeProfile.settings.cameraMode = savedProfile.settings?.cameraMode === 'wide' ? 'wide' : 'follow';
             safeProfile.settings.controlAssist = savedProfile.settings?.controlAssist === true;
+            safeProfile.settings.qualityMode = QUALITY_PRESETS[savedProfile.settings?.qualityMode]
+                ? savedProfile.settings.qualityMode
+                : 'medium';
             return safeProfile;
         }
 
@@ -602,7 +726,8 @@
             profile.settings = {
                 soundEnabled: state.soundEnabled,
                 cameraMode: state.cameraMode,
-                controlAssist: state.controlAssist
+                controlAssist: state.controlAssist,
+                qualityMode: state.qualityMode
             };
             writeStorageJson(PROFILE_STORAGE_KEY, profile);
         }
@@ -715,6 +840,7 @@
             state.soundEnabled = profile.settings.soundEnabled;
             state.cameraMode = profile.settings.cameraMode;
             state.controlAssist = profile.settings.controlAssist;
+            state.qualityMode = profile.settings.qualityMode;
             cachedActiveRun = sanitizeActiveRun(readStorageJson(ACTIVE_RUN_STORAGE_KEY));
             if (!cachedActiveRun) removeStorageValue(ACTIVE_RUN_STORAGE_KEY);
             updateContinueButton();
@@ -792,11 +918,10 @@
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25)); // Performance optimization
             renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
             renderer.toneMappingExposure = 1.0;
+            applyQualitySettings();
             container.appendChild(renderer.domElement);
 
             clock = new THREE.Clock();
@@ -904,12 +1029,14 @@
             const sndPanel = document.getElementById('toggle-sound-panel');
             const camPanel = document.getElementById('toggle-camera-panel');
             const astPanel = document.getElementById('toggle-assist-panel');
+            const qualityPanel = document.getElementById('toggle-quality-panel');
             if (btnSound) btnSound.textContent = state.soundEnabled ? '🔊' : '🔇';
             if (btnCamera) btnCamera.textContent = state.cameraMode === 'follow' ? '📷' : '🎥';
             if (btnAssist) btnAssist.textContent = state.controlAssist ? '🎯' : '◌';
             if (sndPanel) sndPanel.textContent = `Sound: ${state.soundEnabled ? 'On' : 'Off'}`;
             if (camPanel) camPanel.textContent = `Camera: ${state.cameraMode === 'follow' ? 'Follow' : 'Wide'}`;
             if (astPanel) astPanel.textContent = `Assist: ${state.controlAssist ? 'On' : 'Off'}`;
+            if (qualityPanel) qualityPanel.textContent = `Quality: ${getQualityPreset().label}`;
         }
 
         function toggleSound() {
@@ -1148,8 +1275,9 @@
             dirLight = new THREE.DirectionalLight(biome.sunColor, biome.sunIntensity);
             dirLight.position.set(50, 80, 30);
             dirLight.castShadow = true;
-            dirLight.shadow.mapSize.width = 1024;
-            dirLight.shadow.mapSize.height = 1024;
+            const shadowMapSize = getQualityPreset().shadowMapSize;
+            dirLight.shadow.mapSize.width = shadowMapSize;
+            dirLight.shadow.mapSize.height = shadowMapSize;
             dirLight.shadow.camera.near = 10;
             dirLight.shadow.camera.far = 200;
             dirLight.shadow.camera.left = -80;
@@ -1182,6 +1310,7 @@
 
             // Particles
             createEnvironmentParticles(biome);
+            applySceneQualityVisibility();
         }
 
         function createBackgroundDecorations(biome) {
@@ -1544,6 +1673,10 @@
                 mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
                 mesh.castShadow = batch.castShadow;
                 mesh.frustumCulled = false;
+                mesh.userData.fullInstanceCount = batch.matrices.length;
+                if (batch.key.includes('background')) {
+                    mesh.userData.qualityCategory = 'background-decoration';
+                }
                 scene.add(mesh);
                 environmentObjects.push(mesh);
             });
@@ -1638,7 +1771,9 @@
                 scene.add(lava);
                 lavaMeshes.push(lava);
 
-                const glowLight = new THREE.PointLight(0xff4500, 2, 15);
+                const glowLight = configureQualityOptionalLight(
+                    new THREE.PointLight(0xff4500, 2, 15)
+                );
                 glowLight.position.set(x, 1, z);
                 scene.add(glowLight);
                 environmentObjects.push(glowLight);
@@ -1680,7 +1815,9 @@
                 environmentObjects.push(crystal);
 
                 if (Math.random() > 0.6) {
-                    const glowLight = new THREE.PointLight(crystalMat.color, 0.5, 8);
+                    const glowLight = configureQualityOptionalLight(
+                        new THREE.PointLight(crystalMat.color, 0.5, 8)
+                    );
                     glowLight.position.set(x, terrainY + height / 2, z);
                     scene.add(glowLight);
                     environmentObjects.push(glowLight);
@@ -1842,6 +1979,8 @@
                 mesh.instanceMatrix.needsUpdate = true;
                 mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
                 mesh.frustumCulled = false;
+                mesh.userData.fullInstanceCount = batch.particles.length;
+                mesh.userData.qualityCategory = 'ambient-particles';
                 scene.add(mesh);
                 environmentParticleBatches.push(mesh);
             });
@@ -2260,7 +2399,9 @@
             trail.position.z = -1.0;
             bulletGroup.add(trail);
 
-            const light = new THREE.PointLight(bulletColor, 2, 12);
+            const light = configureQualityOptionalLight(
+                new THREE.PointLight(bulletColor, 2, 12)
+            );
             bulletGroup.add(light);
 
             return {
@@ -2287,6 +2428,7 @@
             bullet.innerGlow.scale.set(1, 1, 1);
             bullet.outerGlow.scale.set(1, 1, 1);
             bullet.light.intensity = 2;
+            bullet.light.visible = getQualityPreset().dynamicLights;
             return bullet;
         }
 
@@ -2402,7 +2544,9 @@
             flashGroup.add(ring);
 
             // Flash light
-            const flashLight = new THREE.PointLight(0xffaa00, 3, 15);
+            const flashLight = configureQualityOptionalLight(
+                new THREE.PointLight(0xffaa00, 3, 15)
+            );
             flashGroup.add(flashLight);
 
             const muzzleWorld = new THREE.Vector3();
@@ -2442,7 +2586,8 @@
         }
 
         function createHealEffect(pos) {
-            for (let i = 0; i < 10; i++) {
+            const healParticleCount = getQualityAdjustedCount(10);
+            for (let i = 0; i < healParticleCount; i++) {
                 const geo = new THREE.SphereGeometry(0.25);
                 const mat = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 1 });
                 const mesh = new THREE.Mesh(geo, mat);
@@ -2467,7 +2612,8 @@
             const isGround = type === 'ground';
 
             // Volumetric debris particles
-            for (let i = 0; i < count; i++) {
+            const debrisCount = getQualityAdjustedCount(count);
+            for (let i = 0; i < debrisCount; i++) {
                 const size = (0.2 + Math.random() * 0.5) * (isArmor ? 0.8 : 1);
                 let geo, mat;
 
@@ -2535,7 +2681,9 @@
             }
 
             // Smoke/Dust
-            const smokeCount = isArmor ? 6 : (isGround ? 5 : 4);
+            const smokeCount = getQualityAdjustedCount(
+                isArmor ? 6 : (isGround ? 5 : 4)
+            );
             for (let i = 0; i < smokeCount; i++) {
                 const smokeGeo = new THREE.SphereGeometry(0.8 + Math.random() * 0.6);
                 let smokeColor = 0x6a6a6a;
@@ -2575,7 +2723,8 @@
             if (isArmor && enemyType) {
                 // Healer - Healing particles burst
                 if (enemyType === 'healer') {
-                    for(let i=0; i<8; i++) {
+                    const healerBurstCount = getQualityAdjustedCount(8);
+                    for(let i=0; i<healerBurstCount; i++) {
                          const geo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
                          const mat = new THREE.MeshBasicMaterial({color: 0x00ff00});
                          const p = new THREE.Mesh(geo, mat);
@@ -2591,7 +2740,8 @@
                 }
                 // Scout - Electrical sparks
                 if (enemyType === 'scout') {
-                    for(let i=0; i<6; i++) {
+                    const sparkCount = getQualityAdjustedCount(6);
+                    for(let i=0; i<sparkCount; i++) {
                         // Blue sparks
                          const geo = new THREE.PlaneGeometry(0.1, 0.5);
                          const mat = new THREE.MeshBasicMaterial({color: 0xffff00, side: THREE.DoubleSide});
@@ -2642,7 +2792,9 @@
                 };
                 animateRing(performance.now());
 
-                const light = new THREE.PointLight(color, 3, 20);
+                const light = configureQualityOptionalLight(
+                    new THREE.PointLight(color, 3, 20)
+                );
                 light.position.copy(pos);
                 scene.add(light);
 
@@ -3402,6 +3554,7 @@
             // Environment particles share one or two instanced meshes instead of
             // issuing a separate draw call for every particle.
             environmentParticles.forEach(p => {
+                if (p.instanceIndex >= p.mesh.count) return;
                 p.position.addScaledVector(p.velocity, dt);
                 p.phase += dt;
 
@@ -3740,6 +3893,11 @@
         document.getElementById('toggle-assist-panel').addEventListener('click', (e) => {
             e.stopPropagation();
             toggleControlAssist();
+        });
+
+        document.getElementById('toggle-quality-panel').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleQualityMode();
         });
 
         document.getElementById('close-settings-panel').addEventListener('click', (e) => {
