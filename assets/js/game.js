@@ -165,7 +165,8 @@
             playerSpeed: 18,
             bulletSpeed: 60,
             fireRate: 0.25,
-            baseDamage: 22
+            baseDamage: 22,
+            touchControlTopRatio: 0.3
         };
 
         const BASELINE_FPS = 60;
@@ -355,6 +356,15 @@
             ambientLight = null;
             dirLight = null;
             hemisphereLight = null;
+        }
+
+        function getTouchControlTop() {
+            const viewportHeight = window.visualViewport?.height || window.innerHeight;
+            return viewportHeight * CONFIG.touchControlTopRatio;
+        }
+
+        function isInTouchControlZone(touch) {
+            return touch.clientY >= getTouchControlTop();
         }
 
         function clearInputState() {
@@ -2661,6 +2671,7 @@
 
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const touch = e.changedTouches[i];
+                    if (!isInTouchControlZone(touch)) continue;
 
                     if (touch.clientX < window.innerWidth / 2) {
                         if (moveTouch === null) {

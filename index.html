@@ -14,20 +14,20 @@
 
     <div id="hud-layer">
         <div id="hud-top">
-            <div class="hud-panel">
+            <div class="hud-panel" id="hud-score-panel">
                 <div>🏆 <span id="score">0</span></div>
                 <div class="stats-panel">
                     <span>⚡ <span id="stat-speed">100</span>%</span>
                     <span>💥 <span id="stat-damage">100</span>%</span>
                 </div>
             </div>
-            <div class="hud-panel hud-center">
+            <div class="hud-panel hud-center" id="hud-level-panel">
                 <div class="level-badge">Level <span id="level">1</span></div>
                 <div class="xp-bar-container">
                     <div class="xp-bar-fill" id="xp-bar"></div>
                 </div>
             </div>
-            <div class="hud-panel">
+            <div class="hud-panel" id="hud-health-panel">
                 <div>❤️ Health</div>
                 <div class="health-bar-container">
                     <div class="health-bar-fill" id="hp-bar"></div>
@@ -72,7 +72,7 @@
         <h2>Conquer Every Biome</h2>
         <button type="button" class="btn" id="btn-start">Start Adventure</button>
         <div class="game-info">
-            Left side: Move • Right side: Auto-fire<br>
+            Lower left: Move • Lower right: Hold to fire<br>
             Level up to unlock new realms and abilities
         </div>
     </div>

@@ -151,6 +151,7 @@ function createHarness() {
       getSegmentCylinderHitTime,
       getArenaBoundaryHitTime,
       getSpawnRateForLevel,
+      getTouchControlTop,
       makeEnemy: (type, x, z) => {
         const enemy = new Tank(ENEMY_TYPES[type].color, false, type);
         enemy.mesh.position.set(x, 0, z);
@@ -255,9 +256,21 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(document.getElementById('hud-quickbar').classList.contains('show'), false);
   });
 
+  await t.test('reserves the upper portrait area for HUD controls', () => {
+    assert.equal(api.getTouchControlTop(), 844 * 0.3);
+  });
+
   await t.test('releases firing and movement when touches are cancelled', () => {
     api.startGame();
     const inputLayer = document.getElementById('input-layer');
+
+    // HUD-area touches must not start movement or firing.
+    inputLayer.dispatchEvent(createTouchEvent(window, 'touchstart', [
+      { identifier: 90, clientX: 50, clientY: 100 },
+      { identifier: 91, clientX: 320, clientY: 100 }
+    ]));
+    assert.equal(api.state().input.isFiring, false);
+    assert.equal(document.getElementById('joystick-base').style.display, 'none');
 
     inputLayer.dispatchEvent(createTouchEvent(window, 'touchstart', [
       { identifier: 1, clientX: 300, clientY: 700 }

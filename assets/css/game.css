@@ -4,7 +4,15 @@
             box-sizing: border-box;
         }
 
+        html,
         body {
+            width: 100%;
+            height: 100%;
+        }
+
+        body {
+            min-height: 100vh;
+            min-height: 100dvh;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             overflow: hidden;
             background: #000;
@@ -362,6 +370,7 @@
             border: 3px solid rgba(255,255,255,0.3);
             border-radius: 50%;
             display: none;
+            z-index: 14;
             pointer-events: none;
             transform: translate(-50%, -50%);
             background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
@@ -420,4 +429,233 @@
             opacity: 0;
             transition: opacity 0.3s ease;
             z-index: 8;
+        }
+
+        /* Portrait APK layout. The same glass panels, gradients, colors, and
+           controls are retained, but arranged so they do not overlap. */
+        @media (orientation: portrait) {
+            .screen {
+                min-height: 100dvh;
+                padding-top: max(20px, env(safe-area-inset-top));
+                padding-right: max(16px, env(safe-area-inset-right));
+                padding-bottom: max(20px, env(safe-area-inset-bottom));
+                padding-left: max(16px, env(safe-area-inset-left));
+                overflow-y: auto;
+            }
+
+            #hud-top {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+                align-items: start;
+                gap: 5px;
+                padding-top: max(8px, env(safe-area-inset-top));
+                padding-right: max(8px, env(safe-area-inset-right));
+                padding-bottom: 0;
+                padding-left: max(8px, env(safe-area-inset-left));
+            }
+
+            .hud-panel {
+                min-width: 0;
+                max-width: 140px;
+                padding: 8px;
+                border-radius: 12px;
+                font-size: 11px;
+                box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+            }
+
+            #hud-score-panel {
+                width: 100%;
+                justify-self: start;
+            }
+
+            #hud-level-panel {
+                width: min(27vw, 112px);
+                justify-self: center;
+            }
+
+            #hud-health-panel {
+                width: 100%;
+                justify-self: end;
+            }
+
+            .hud-center {
+                gap: 5px;
+            }
+
+            .level-badge {
+                width: 100%;
+                padding: 6px 4px;
+                border-radius: 18px;
+                font-size: 10px;
+                letter-spacing: 1px;
+                text-align: center;
+            }
+
+            .xp-bar-container {
+                width: 100%;
+                height: 6px;
+            }
+
+            .health-bar-container {
+                width: 100%;
+                height: 8px;
+                margin-top: 5px;
+            }
+
+            .stats-panel {
+                justify-content: space-between;
+                gap: 4px;
+                margin-top: 5px;
+                font-size: 9px;
+                white-space: nowrap;
+            }
+
+            .hud-quickbar {
+                top: calc(max(8px, env(safe-area-inset-top)) + 62px);
+                left: max(8px, env(safe-area-inset-left));
+                gap: 6px;
+            }
+
+            .pause-btn {
+                top: calc(max(8px, env(safe-area-inset-top)) + 62px);
+                right: max(8px, env(safe-area-inset-right));
+                width: 44px;
+                height: 44px;
+                border-radius: 14px;
+                font-size: 18px;
+            }
+
+            .hud-icon-btn {
+                width: 44px;
+                height: 44px;
+                border-radius: 14px;
+                font-size: 17px;
+            }
+
+            .hud-icon-btn.wide {
+                width: auto;
+                min-width: 0;
+                padding: 0 8px;
+                font-size: 12px;
+            }
+
+            .biome-indicator {
+                top: calc(max(8px, env(safe-area-inset-top)) + 116px);
+                max-width: 86vw;
+                padding: 7px 14px;
+                overflow: hidden;
+                font-size: 10px;
+                letter-spacing: 1.5px;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            #upgrade-notification {
+                top: max(18%, calc(max(8px, env(safe-area-inset-top)) + 138px));
+                width: min(90vw, 390px);
+                padding: 13px 18px;
+            }
+
+            #enemy-intro {
+                bottom: calc(max(96px, env(safe-area-inset-bottom)) + 24px);
+                width: min(84vw, 340px);
+                padding: 12px 18px;
+            }
+
+            h1 {
+                max-width: 94vw;
+                font-size: clamp(2rem, 10vw, 3rem);
+                letter-spacing: clamp(2px, 1.4vw, 6px);
+                line-height: 1.15;
+            }
+
+            h2 {
+                max-width: 92vw;
+                margin-bottom: 20px;
+                font-size: clamp(0.8rem, 3.8vw, 1rem);
+                letter-spacing: clamp(2px, 1vw, 4px);
+                text-align: center;
+            }
+
+            .btn {
+                max-width: 92vw;
+                padding: 16px 34px;
+                font-size: 14px;
+                letter-spacing: 2px;
+            }
+
+            .game-info {
+                max-width: 90vw;
+                margin-top: 26px;
+                line-height: 1.7;
+            }
+
+            .settings-panel {
+                width: min(92vw, 420px);
+                max-height: calc(100dvh - max(40px, env(safe-area-inset-top)) - max(40px, env(safe-area-inset-bottom)));
+                overflow-y: auto;
+            }
+
+            #pause-screen h1 {
+                font-size: clamp(2rem, 10vw, 2.5rem);
+            }
+        }
+
+        @media (orientation: portrait) and (max-width: 360px) {
+            #hud-top {
+                gap: 4px;
+                padding-right: max(6px, env(safe-area-inset-right));
+                padding-left: max(6px, env(safe-area-inset-left));
+            }
+
+            .hud-panel {
+                padding: 7px 6px;
+                font-size: 10px;
+            }
+
+            #hud-level-panel {
+                width: min(26vw, 94px);
+            }
+
+            .level-badge {
+                padding: 5px 2px;
+                font-size: 9px;
+            }
+
+            .stats-panel {
+                gap: 2px;
+                font-size: 8px;
+            }
+
+            .hud-quickbar {
+                gap: 5px;
+            }
+
+            .pause-btn,
+            .hud-icon-btn {
+                width: 40px;
+                height: 40px;
+                border-radius: 13px;
+                font-size: 16px;
+            }
+
+            .settings-grid {
+                gap: 7px;
+            }
+        }
+
+        @media (orientation: portrait) and (max-height: 680px) {
+            .game-info {
+                margin-top: 16px;
+                font-size: 11px;
+            }
+
+            .settings-panel {
+                padding: 14px;
+            }
+
+            .settings-row {
+                margin-top: 9px;
+                line-height: 1.35;
+            }
         }
