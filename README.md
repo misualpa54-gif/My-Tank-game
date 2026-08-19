@@ -60,7 +60,7 @@ Build the offline web files and copy them into the Android project:
 npm run android:sync
 ```
 
-Build a debug APK on a computer with Java 17 and the Android SDK installed:
+Build a debug APK on a computer with Java 21 and the Android SDK installed:
 
 ```bash
 npm run android:apk
