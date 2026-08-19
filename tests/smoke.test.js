@@ -60,6 +60,13 @@ function createHarness(storageSeed = {}) {
   Object.entries(storageSeed).forEach(([key, value]) => {
     window.localStorage.setItem(key, value);
   });
+  if (!Object.hasOwn(storageSeed, 'tank_realms_profile_v1')) {
+    window.localStorage.setItem('tank_realms_profile_v1', JSON.stringify({
+      version: 1,
+      tutorialCompleted: true,
+      settings: {}
+    }));
+  }
 
   Object.defineProperty(window, 'innerWidth', { value: 390, writable: true });
   Object.defineProperty(window, 'innerHeight', { value: 844, writable: true });
@@ -159,6 +166,19 @@ function createHarness(storageSeed = {}) {
       applyQualitySettings,
       getQualityPreset,
       getQualityAdjustedCount,
+      toggleHaptics,
+      toggleCameraShakeMode,
+      toggleReducedFlashes,
+      toggleHandedControls,
+      toggleHudScale,
+      setEffectsVolume,
+      calculateDamageAfterArmor,
+      requestNewRun,
+      closeNewRunConfirmation,
+      advanceTutorial,
+      finishTutorial,
+      renderRunResults,
+      playGameSound,
       tankDesigns: () => TANK_DESIGNS,
       permanentUpgradeDefinitions: () => PERMANENT_UPGRADE_DEFINITIONS,
       pauseGame,
@@ -262,6 +282,38 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
       JSON.parse(window.localStorage.getItem('tank_realms_profile_v1')).settings.qualityMode,
       'medium'
     );
+  });
+
+  await t.test('uses diminishing armor instead of invulnerability', () => {
+    assert.equal(api.calculateDamageAfterArmor(30, 0), 30);
+    assert.equal(api.calculateDamageAfterArmor(30, 50), 18);
+    assert.ok(api.calculateDamageAfterArmor(30, 20) > api.calculateDamageAfterArmor(30, 50));
+    assert.ok(api.calculateDamageAfterArmor(8, 50) > 1);
+  });
+
+  await t.test('persists accessibility and comfort settings', () => {
+    api.toggleHaptics();
+    assert.equal(api.state().hapticsEnabled, false);
+    api.toggleCameraShakeMode();
+    assert.equal(api.state().cameraShakeMode, 'off');
+    api.toggleCameraShakeMode();
+    assert.equal(api.state().cameraShakeMode, 'reduced');
+    api.toggleCameraShakeMode();
+    assert.equal(api.state().cameraShakeMode, 'full');
+    api.toggleReducedFlashes();
+    assert.equal(document.body.classList.contains('reduced-flashes'), true);
+    api.toggleReducedFlashes();
+    api.toggleHandedControls();
+    assert.equal(api.state().leftHanded, true);
+    api.toggleHandedControls();
+    api.toggleHudScale();
+    assert.equal(document.body.classList.contains('hud-large'), true);
+    api.toggleHudScale();
+    api.setEffectsVolume(35);
+    assert.equal(api.state().effectsVolume, 0.35);
+    api.setEffectsVolume(70);
+    api.toggleHaptics();
+    assert.equal(api.state().hapticsEnabled, true);
   });
 
   await t.test('disposes old biome geometries, materials, and background texture', () => {
@@ -642,6 +694,68 @@ test('pending upgrade choices survive a page reload', () => {
   secondSession.dom.window.close();
 });
 
+test('first-run tutorial pauses battle and completes in four steps', () => {
+  const harness = createHarness({
+    tank_realms_profile_v1: JSON.stringify({
+      version: 1,
+      tutorialCompleted: false,
+      settings: {}
+    })
+  });
+  harness.api.startGame();
+  assert.equal(harness.api.state().gamePhase, 'tutorial');
+  assert.equal(harness.api.state().tutorialOpen, true);
+  assert.equal(
+    harness.window.document.getElementById('tutorial-screen').classList.contains('hidden'),
+    false
+  );
+  for (let i = 0; i < 4; i++) harness.api.advanceTutorial();
+  assert.equal(harness.api.state().gamePhase, 'playing');
+  assert.equal(harness.api.profile().tutorialCompleted, true);
+  assert.equal(harness.api.state().tutorialOpen, false);
+  harness.dom.window.close();
+});
+
+test('new-run confirmation protects a living save', () => {
+  const harness = createHarness();
+  harness.api.startGame();
+  harness.api.quitToMenu();
+  assert.notEqual(harness.api.cachedActiveRun(), null);
+  harness.api.requestNewRun();
+  assert.equal(harness.api.state().newRunConfirmOpen, true);
+  assert.equal(
+    harness.window.document.getElementById('new-run-confirm-screen').classList.contains('hidden'),
+    false
+  );
+  harness.api.closeNewRunConfirmation();
+  assert.notEqual(harness.api.cachedActiveRun(), null);
+  assert.equal(harness.api.state().newRunConfirmOpen, false);
+  harness.dom.window.close();
+});
+
+test('run results summarize local balance statistics', () => {
+  const harness = createHarness();
+  harness.api.startGame();
+  harness.api.state().score = 3210;
+  harness.api.state().level = 9;
+  harness.api.state().runStats = {
+    kills: 27,
+    highestCombo: 8,
+    coinsEarned: 245,
+    elapsedSeconds: 125,
+    upgradeHistory: ['damage', 'speed', 'armor']
+  };
+  harness.api.endGame();
+  const document = harness.window.document;
+  assert.equal(document.getElementById('result-coins').textContent, '245');
+  assert.equal(document.getElementById('result-kills').textContent, '27');
+  assert.equal(document.getElementById('result-combo').textContent, '8');
+  assert.equal(document.getElementById('result-time').textContent, '2:05');
+  assert.equal(document.getElementById('result-upgrades').textContent, '3');
+  assert.match(document.getElementById('result-record').textContent, /New best/);
+  harness.dom.window.close();
+});
+
 test('garage unlocks equal-base tanks and keeps upgrades separate', () => {
   const harness = createHarness();
   const { api, window } = harness;
@@ -728,6 +842,34 @@ test('combo multiplies score and coins but not XP', () => {
   harness.dom.window.close();
 });
 
+test('left-handed mode swaps movement and firing zones', () => {
+  const harness = createHarness({
+    tank_realms_profile_v1: JSON.stringify({
+      version: 1,
+      tutorialCompleted: true,
+      settings: { leftHanded: true }
+    })
+  });
+  harness.api.startGame();
+  const inputLayer = harness.window.document.getElementById('input-layer');
+  inputLayer.dispatchEvent(createTouchEvent(harness.window, 'touchstart', [
+    { identifier: 201, clientX: 320, clientY: 700 }
+  ]));
+  assert.equal(
+    harness.window.document.getElementById('joystick-base').style.display,
+    'block'
+  );
+  assert.equal(harness.api.state().input.isFiring, false);
+  inputLayer.dispatchEvent(createTouchEvent(harness.window, 'touchcancel', [
+    { identifier: 201, clientX: 320, clientY: 700 }
+  ]));
+  inputLayer.dispatchEvent(createTouchEvent(harness.window, 'touchstart', [
+    { identifier: 202, clientX: 50, clientY: 700 }
+  ]));
+  assert.equal(harness.api.state().input.isFiring, true);
+  harness.dom.window.close();
+});
+
 test('corrupt and outdated save data cannot block startup', () => {
   const harness = createHarness({
     tank_realms_profile_v1: '{broken-json',
@@ -754,7 +896,13 @@ test('saved settings load into a new session', () => {
         soundEnabled: true,
         cameraMode: 'wide',
         controlAssist: true,
-        qualityMode: 'low'
+        qualityMode: 'low',
+        effectsVolume: 0.35,
+        hapticsEnabled: false,
+        cameraShakeMode: 'reduced',
+        reducedFlashes: true,
+        leftHanded: true,
+        hudScale: 'large'
       }
     })
   });
@@ -763,6 +911,14 @@ test('saved settings load into a new session', () => {
   assert.equal(harness.api.state().cameraMode, 'wide');
   assert.equal(harness.api.state().controlAssist, true);
   assert.equal(harness.api.state().qualityMode, 'low');
+  assert.equal(harness.api.state().effectsVolume, 0.35);
+  assert.equal(harness.api.state().hapticsEnabled, false);
+  assert.equal(harness.api.state().cameraShakeMode, 'reduced');
+  assert.equal(harness.api.state().reducedFlashes, true);
+  assert.equal(harness.api.state().leftHanded, true);
+  assert.equal(harness.api.state().hudScale, 'large');
+  assert.equal(harness.window.document.body.classList.contains('reduced-flashes'), true);
+  assert.equal(harness.window.document.body.classList.contains('hud-large'), true);
   assert.equal(harness.api.renderer().pixelRatio, 0.8);
   assert.equal(harness.api.profile().bestScore, 500);
   assert.equal(harness.api.profile().bestLevel, 6);

@@ -263,6 +263,11 @@
             return 1 - Math.pow(1 - chanceAt60Fps, dt * BASELINE_FPS);
         }
 
+        function calculateDamageAfterArmor(amount, armor) {
+            const safeArmor = Math.max(0, armor);
+            return Math.max(1, amount * 75 / (75 + safeArmor));
+        }
+
         function getSegmentCylinderHitTime(start, end, center, radius, heightThreshold) {
             const segmentX = end.x - start.x;
             const segmentZ = end.z - start.z;
@@ -347,12 +352,29 @@
                 ownedTanks: ['vanguard'],
                 selectedTankId: 'vanguard',
                 tankUpgrades: createDefaultTankUpgradeCollection(),
+                tutorialCompleted: false,
                 settings: {
                     soundEnabled: false,
                     cameraMode: 'follow',
                     controlAssist: false,
-                    qualityMode: 'medium'
+                    qualityMode: 'medium',
+                    effectsVolume: 0.7,
+                    hapticsEnabled: true,
+                    cameraShakeMode: 'full',
+                    reducedFlashes: false,
+                    leftHanded: false,
+                    hudScale: 'normal'
                 }
+            };
+        }
+
+        function createDefaultRunStats() {
+            return {
+                kills: 0,
+                highestCombo: 0,
+                coinsEarned: 0,
+                elapsedSeconds: 0,
+                upgradeHistory: []
             };
         }
 
@@ -382,8 +404,19 @@
             cameraMode: 'follow',
             controlAssist: false,
             qualityMode: 'medium',
+            effectsVolume: 0.7,
+            hapticsEnabled: true,
+            cameraShakeMode: 'full',
+            reducedFlashes: false,
+            leftHanded: false,
+            hudScale: 'normal',
             settingsOpen: false,
             garageOpen: false,
+            tutorialOpen: false,
+            tutorialStep: 0,
+            tutorialReturnTarget: 'playing',
+            newRunConfirmOpen: false,
+            runStats: createDefaultRunStats(),
             upgradeTiers: createDefaultUpgradeTiers(),
             runTankId: 'vanguard',
             runPermanentUpgrades: createDefaultPermanentUpgradeTiers(),
@@ -397,6 +430,9 @@
         };
 
         let audioCtx = null;
+        let noiseBuffer = null;
+        let lastHapticTime = -Infinity;
+        const lastSoundTimes = new Map();
 
         // Three.js Globals
         let scene, camera, renderer, clock;
@@ -573,6 +609,61 @@
             saveProfile();
         }
 
+        function applyAccessibilityClasses() {
+            document.body.classList.toggle('reduced-flashes', state.reducedFlashes);
+            document.body.classList.toggle('hud-large', state.hudScale === 'large');
+        }
+
+        function toggleHaptics() {
+            state.hapticsEnabled = !state.hapticsEnabled;
+            if (state.hapticsEnabled) triggerHaptic('light');
+            syncHUDControls();
+            saveProfile();
+        }
+
+        function toggleCameraShakeMode() {
+            const modes = ['off', 'reduced', 'full'];
+            state.cameraShakeMode = modes[(modes.indexOf(state.cameraShakeMode) + 1) % modes.length];
+            syncHUDControls();
+            saveProfile();
+        }
+
+        function toggleReducedFlashes() {
+            state.reducedFlashes = !state.reducedFlashes;
+            applyAccessibilityClasses();
+            syncHUDControls();
+            saveProfile();
+        }
+
+        function toggleHandedControls() {
+            state.leftHanded = !state.leftHanded;
+            syncHUDControls();
+            saveProfile();
+        }
+
+        function toggleHudScale() {
+            state.hudScale = state.hudScale === 'large' ? 'normal' : 'large';
+            applyAccessibilityClasses();
+            syncHUDControls();
+            saveProfile();
+        }
+
+        function setEffectsVolume(percent) {
+            state.effectsVolume = clampSavedNumber(percent, 0, 100, 70) / 100;
+            syncHUDControls();
+            saveProfile();
+        }
+
+        function getCameraShakeScale() {
+            if (state.cameraShakeMode === 'off') return 0;
+            if (state.cameraShakeMode === 'reduced') return 0.45;
+            return 1;
+        }
+
+        function getFlashScale() {
+            return state.reducedFlashes ? 0.3 : 1;
+        }
+
         function getTouchControlTop() {
             const viewportHeight = window.visualViewport?.height || window.innerHeight;
             return viewportHeight * CONFIG.touchControlTopRatio;
@@ -714,10 +805,26 @@
             });
             safeProfile.settings.soundEnabled = savedProfile.settings?.soundEnabled === true;
             safeProfile.settings.cameraMode = savedProfile.settings?.cameraMode === 'wide' ? 'wide' : 'follow';
+            safeProfile.tutorialCompleted = savedProfile.tutorialCompleted === true;
             safeProfile.settings.controlAssist = savedProfile.settings?.controlAssist === true;
             safeProfile.settings.qualityMode = QUALITY_PRESETS[savedProfile.settings?.qualityMode]
                 ? savedProfile.settings.qualityMode
                 : 'medium';
+            safeProfile.settings.effectsVolume = clampSavedNumber(
+                savedProfile.settings?.effectsVolume,
+                0,
+                1,
+                0.7
+            );
+            safeProfile.settings.hapticsEnabled = savedProfile.settings?.hapticsEnabled !== false;
+            safeProfile.settings.cameraShakeMode = ['off', 'reduced', 'full'].includes(
+                savedProfile.settings?.cameraShakeMode
+            ) ? savedProfile.settings.cameraShakeMode : 'full';
+            safeProfile.settings.reducedFlashes = savedProfile.settings?.reducedFlashes === true;
+            safeProfile.settings.leftHanded = savedProfile.settings?.leftHanded === true;
+            safeProfile.settings.hudScale = savedProfile.settings?.hudScale === 'large'
+                ? 'large'
+                : 'normal';
             return safeProfile;
         }
 
@@ -727,7 +834,13 @@
                 soundEnabled: state.soundEnabled,
                 cameraMode: state.cameraMode,
                 controlAssist: state.controlAssist,
-                qualityMode: state.qualityMode
+                qualityMode: state.qualityMode,
+                effectsVolume: state.effectsVolume,
+                hapticsEnabled: state.hapticsEnabled,
+                cameraShakeMode: state.cameraShakeMode,
+                reducedFlashes: state.reducedFlashes,
+                leftHanded: state.leftHanded,
+                hudScale: state.hudScale
             };
             writeStorageJson(PROFILE_STORAGE_KEY, profile);
         }
@@ -742,6 +855,18 @@
             return {
                 x: clampSavedNumber(savedPosition?.x, -44, 44, 0),
                 z: clampSavedNumber(savedPosition?.z, -44, 44, 0)
+            };
+        }
+
+        function sanitizeRunStats(savedStats) {
+            return {
+                kills: clampSavedNumber(savedStats?.kills, 0, 1e9, 0, true),
+                highestCombo: clampSavedNumber(savedStats?.highestCombo, 0, 1000, 0, true),
+                coinsEarned: clampSavedNumber(savedStats?.coinsEarned, 0, 1e12, 0, true),
+                elapsedSeconds: clampSavedNumber(savedStats?.elapsedSeconds, 0, 1e9, 0),
+                upgradeHistory: Array.isArray(savedStats?.upgradeHistory)
+                    ? savedStats.upgradeHistory.filter(id => UPGRADE_BY_ID.has(id)).slice(0, 1000)
+                    : []
             };
         }
 
@@ -798,6 +923,7 @@
                 alive: true,
                 savedAt: clampSavedNumber(savedRun.savedAt, 0, Number.MAX_SAFE_INTEGER, Date.now(), true),
                 score: clampSavedNumber(savedRun.score, 0, 1e12, 0, true),
+                runStats: sanitizeRunStats(savedRun.runStats),
                 xp: clampSavedNumber(savedRun.xp, 0, xpToNext - 1, 0),
                 level,
                 xpToNext,
@@ -841,6 +967,13 @@
             state.cameraMode = profile.settings.cameraMode;
             state.controlAssist = profile.settings.controlAssist;
             state.qualityMode = profile.settings.qualityMode;
+            state.effectsVolume = profile.settings.effectsVolume;
+            state.hapticsEnabled = profile.settings.hapticsEnabled;
+            state.cameraShakeMode = profile.settings.cameraShakeMode;
+            state.reducedFlashes = profile.settings.reducedFlashes;
+            state.leftHanded = profile.settings.leftHanded;
+            state.hudScale = profile.settings.hudScale;
+            applyAccessibilityClasses();
             cachedActiveRun = sanitizeActiveRun(readStorageJson(ACTIVE_RUN_STORAGE_KEY));
             if (!cachedActiveRun) removeStorageValue(ACTIVE_RUN_STORAGE_KEY);
             updateContinueButton();
@@ -853,6 +986,10 @@
                 alive: player.hp > 0,
                 savedAt: Date.now(),
                 score: state.score,
+                runStats: {
+                    ...state.runStats,
+                    upgradeHistory: [...state.runStats.upgradeHistory]
+                },
                 xp: state.xp,
                 level: state.level,
                 xpToNext: state.xpToNext,
@@ -997,24 +1134,156 @@
             return audioCtx;
         }
 
-        function playTone({ frequency = 440, duration = 0.08, type = 'sine', gain = 0.03, slideTo = null } = {}) {
-            if (!state.soundEnabled) return;
+        function playTone({
+            frequency = 440,
+            duration = 0.08,
+            type = 'sine',
+            gain = 0.03,
+            slideTo = null,
+            delay = 0
+        } = {}) {
+            if (!state.soundEnabled || state.effectsVolume <= 0) return;
             const ctx = ensureAudioContext();
             if (!ctx) return;
+            const startTime = ctx.currentTime + delay;
             const osc = ctx.createOscillator();
             const g = ctx.createGain();
             osc.type = type;
-            osc.frequency.setValueAtTime(frequency, ctx.currentTime);
-            if (slideTo !== null) osc.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), ctx.currentTime + duration);
-            g.gain.setValueAtTime(gain, ctx.currentTime);
-            g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+            osc.frequency.setValueAtTime(frequency, startTime);
+            if (slideTo !== null) {
+                osc.frequency.exponentialRampToValueAtTime(
+                    Math.max(20, slideTo),
+                    startTime + duration
+                );
+            }
+            g.gain.setValueAtTime(gain * state.effectsVolume, startTime);
+            g.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
             osc.connect(g);
             g.connect(ctx.destination);
-            osc.start();
-            osc.stop(ctx.currentTime + duration + 0.02);
+            osc.start(startTime);
+            osc.stop(startTime + duration + 0.02);
         }
 
-        function playUISound() { playTone({ frequency: 660, duration: 0.05, type: 'triangle', gain: 0.025 }); }
+        function playNoise({ duration = 0.12, gain = 0.04, delay = 0 } = {}) {
+            if (!state.soundEnabled || state.effectsVolume <= 0) return;
+            const ctx = ensureAudioContext();
+            if (!ctx) return;
+            if (!noiseBuffer || noiseBuffer.sampleRate !== ctx.sampleRate) {
+                noiseBuffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+                const data = noiseBuffer.getChannelData(0);
+                for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+            }
+            const source = ctx.createBufferSource();
+            const filter = ctx.createBiquadFilter();
+            const g = ctx.createGain();
+            const startTime = ctx.currentTime + delay;
+            source.buffer = noiseBuffer;
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(900, startTime);
+            g.gain.setValueAtTime(gain * state.effectsVolume, startTime);
+            g.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+            source.connect(filter);
+            filter.connect(g);
+            g.connect(ctx.destination);
+            source.start(startTime);
+            source.stop(startTime + duration + 0.02);
+        }
+
+        function canPlaySound(name, minimumGapMs) {
+            const now = performance.now();
+            const previous = lastSoundTimes.get(name) || -Infinity;
+            if (now - previous < minimumGapMs) return false;
+            lastSoundTimes.set(name, now);
+            return true;
+        }
+
+        function playGameSound(name, variant = 'vanguard') {
+            if (!state.soundEnabled || state.effectsVolume <= 0) return;
+            const gaps = {
+                playerFire: 40,
+                enemyFire: 75,
+                impact: 45,
+                explosion: 90,
+                damage: 100,
+                combo: 60,
+                coin: 45
+            };
+            if (!canPlaySound(name, gaps[name] || 20)) return;
+
+            switch (name) {
+                case 'playerFire': {
+                    const base = variant === 'ember' ? 250 : variant === 'azure' ? 520 : 390;
+                    playTone({ frequency: base, slideTo: base * 1.8, duration: 0.08, type: 'sawtooth', gain: 0.035 });
+                    playTone({ frequency: base * 2, slideTo: base, duration: 0.06, type: 'triangle', gain: 0.02 });
+                    break;
+                }
+                case 'enemyFire':
+                    playTone({ frequency: 180, slideTo: 90, duration: 0.11, type: 'square', gain: 0.028 });
+                    break;
+                case 'impact':
+                    playNoise({ duration: 0.07, gain: 0.028 });
+                    playTone({ frequency: 120, slideTo: 70, duration: 0.08, type: 'triangle', gain: 0.018 });
+                    break;
+                case 'explosion':
+                    playNoise({ duration: 0.28, gain: 0.06 });
+                    playTone({ frequency: 95, slideTo: 38, duration: 0.3, type: 'sawtooth', gain: 0.04 });
+                    break;
+                case 'damage':
+                    playTone({ frequency: 160, slideTo: 70, duration: 0.16, type: 'sawtooth', gain: 0.04 });
+                    break;
+                case 'levelUp':
+                    [440, 660, 880].forEach((frequency, index) =>
+                        playTone({ frequency, duration: 0.14, type: 'triangle', gain: 0.03, delay: index * 0.08 })
+                    );
+                    break;
+                case 'upgrade':
+                    playTone({ frequency: 620, slideTo: 980, duration: 0.16, type: 'triangle', gain: 0.032 });
+                    break;
+                case 'combo':
+                    playTone({ frequency: 520 + state.comboCount * 35, duration: 0.07, type: 'square', gain: 0.022 });
+                    break;
+                case 'comboLost':
+                    playTone({ frequency: 300, slideTo: 150, duration: 0.13, type: 'triangle', gain: 0.018 });
+                    break;
+                case 'coin':
+                    playTone({ frequency: 900, slideTo: 1250, duration: 0.05, type: 'sine', gain: 0.018 });
+                    break;
+                case 'purchase':
+                    playTone({ frequency: 500, duration: 0.08, type: 'triangle', gain: 0.025 });
+                    playTone({ frequency: 750, duration: 0.11, type: 'triangle', gain: 0.025, delay: 0.07 });
+                    break;
+                case 'unlock':
+                    [360, 540, 720, 960].forEach((frequency, index) =>
+                        playTone({ frequency, duration: 0.13, type: 'triangle', gain: 0.028, delay: index * 0.07 })
+                    );
+                    break;
+                case 'gameOver':
+                    [300, 220, 150].forEach((frequency, index) =>
+                        playTone({ frequency, duration: 0.2, type: 'sawtooth', gain: 0.025, delay: index * 0.12 })
+                    );
+                    break;
+                case 'bossWarning':
+                    playTone({ frequency: 130, duration: 0.5, type: 'square', gain: 0.04 });
+                    break;
+                default:
+                    playTone({ frequency: 660, duration: 0.05, type: 'triangle', gain: 0.025 });
+            }
+        }
+
+        function triggerHaptic(style = 'light') {
+            if (!state.hapticsEnabled) return;
+            const now = performance.now();
+            const minimumGap = style === 'heavy' ? 100 : style === 'medium' ? 70 : 45;
+            if (now - lastHapticTime < minimumGap) return;
+            lastHapticTime = now;
+            if (window.TankRealmsNative?.impact) {
+                window.TankRealmsNative.impact(style);
+            } else if (navigator.vibrate) {
+                navigator.vibrate(style === 'heavy' ? 35 : style === 'medium' ? 20 : 10);
+            }
+        }
+
+        function playUISound() { playGameSound('ui'); }
         function playPauseSound() { playTone({ frequency: 520, slideTo: 420, duration: 0.07, type: 'triangle', gain: 0.02 }); }
 
         function syncHUDControls() {
@@ -1030,6 +1299,13 @@
             const camPanel = document.getElementById('toggle-camera-panel');
             const astPanel = document.getElementById('toggle-assist-panel');
             const qualityPanel = document.getElementById('toggle-quality-panel');
+            const hapticsPanel = document.getElementById('toggle-haptics-panel');
+            const shakePanel = document.getElementById('toggle-shake-panel');
+            const flashesPanel = document.getElementById('toggle-flashes-panel');
+            const handedPanel = document.getElementById('toggle-handed-panel');
+            const hudScalePanel = document.getElementById('toggle-hud-scale-panel');
+            const volumeSlider = document.getElementById('effects-volume');
+            const volumeValue = document.getElementById('effects-volume-value');
             if (btnSound) btnSound.textContent = state.soundEnabled ? '🔊' : '🔇';
             if (btnCamera) btnCamera.textContent = state.cameraMode === 'follow' ? '📷' : '🎥';
             if (btnAssist) btnAssist.textContent = state.controlAssist ? '🎯' : '◌';
@@ -1037,6 +1313,17 @@
             if (camPanel) camPanel.textContent = `Camera: ${state.cameraMode === 'follow' ? 'Follow' : 'Wide'}`;
             if (astPanel) astPanel.textContent = `Assist: ${state.controlAssist ? 'On' : 'Off'}`;
             if (qualityPanel) qualityPanel.textContent = `Quality: ${getQualityPreset().label}`;
+            if (hapticsPanel) hapticsPanel.textContent = `Haptics: ${state.hapticsEnabled ? 'On' : 'Off'}`;
+            if (shakePanel) {
+                const label = state.cameraShakeMode === 'reduced' ? 'Reduced' :
+                    state.cameraShakeMode === 'off' ? 'Off' : 'Full';
+                shakePanel.textContent = `Shake: ${label}`;
+            }
+            if (flashesPanel) flashesPanel.textContent = `Flashes: ${state.reducedFlashes ? 'Reduced' : 'Full'}`;
+            if (handedPanel) handedPanel.textContent = `Controls: ${state.leftHanded ? 'Left-handed' : 'Standard'}`;
+            if (hudScalePanel) hudScalePanel.textContent = `HUD: ${state.hudScale === 'large' ? 'Large' : 'Normal'}`;
+            if (volumeSlider) volumeSlider.value = String(Math.round(state.effectsVolume * 100));
+            if (volumeValue) volumeValue.textContent = `${Math.round(state.effectsVolume * 100)}%`;
         }
 
         function toggleSound() {
@@ -1083,6 +1370,8 @@
             profile.coins -= tank.unlockCost;
             profile.ownedTanks.push(tankId);
             profile.selectedTankId = tankId;
+            playGameSound('unlock');
+            triggerHaptic('heavy');
             saveProfile();
             updateHUD();
             renderGarage();
@@ -1107,6 +1396,8 @@
 
             profile.coins -= cost;
             tankTiers[upgrade.id]++;
+            playGameSound('purchase');
+            triggerHaptic('medium');
             saveProfile();
             updateHUD();
             renderGarage();
@@ -2312,7 +2603,9 @@
             }
 
             takeDamage(amount) {
-                const actualDamage = Math.max(1, amount - state.playerStats.armor * (this.isPlayer ? 1 : 0));
+                const actualDamage = this.isPlayer
+                    ? calculateDamageAfterArmor(amount, state.playerStats.armor)
+                    : amount;
                 this.hp -= actualDamage;
 
                 this.mesh.traverse(c => {
@@ -2470,6 +2763,11 @@
             setTimeout(() => recoilReturn(performance.now()), 50);
 
             createMuzzleFlash(source);
+            playGameSound(
+                source.isPlayer ? 'playerFire' : 'enemyFire',
+                source.isPlayer ? source.designId : source.type
+            );
+            if (source.isPlayer) triggerHaptic('light');
 
             const shotCount = source.isPlayer && state.playerStats.multishot > 0 ? 3 : 1;
             const spreadAngle = 0.12;
@@ -2524,10 +2822,15 @@
 
         function createMuzzleFlash(source) {
             const flashGroup = new THREE.Group();
+            const flashVisibility = getFlashScale();
 
             // Central flash sphere
             const flashGeo = new THREE.SphereGeometry(1.0);
-            const flashMat = new THREE.MeshBasicMaterial({ color: 0xffffaa });
+            const flashMat = new THREE.MeshBasicMaterial({
+                color: 0xffffaa,
+                transparent: true,
+                opacity: getFlashScale()
+            });
             const flash = new THREE.Mesh(flashGeo, flashMat);
             flashGroup.add(flash);
 
@@ -2536,7 +2839,7 @@
             const ringMat = new THREE.MeshBasicMaterial({
                 color: 0xffaa00,
                 transparent: true,
-                opacity: 0.9,
+                opacity: 0.9 * getFlashScale(),
                 side: THREE.DoubleSide
             });
             const ring = new THREE.Mesh(ringGeo, ringMat);
@@ -2545,7 +2848,7 @@
 
             // Flash light
             const flashLight = configureQualityOptionalLight(
-                new THREE.PointLight(0xffaa00, 3, 15)
+                new THREE.PointLight(0xffaa00, 3 * getFlashScale(), 15)
             );
             flashGroup.add(flashLight);
 
@@ -2562,7 +2865,7 @@
 
             // Animate out
             let scale = 1;
-            let lightIntensity = 3;
+            let lightIntensity = 3 * flashVisibility;
             let lastFlashFrame = null;
             const animateFlash = (timestamp) => {
                 const frameScale = lastFlashFrame === null
@@ -2572,8 +2875,8 @@
                 scale *= Math.pow(0.82, frameScale);
                 lightIntensity *= Math.pow(0.8, frameScale);
                 flashGroup.scale.setScalar(scale);
-                flash.material.opacity = scale;
-                ring.material.opacity = scale * 0.9;
+                flash.material.opacity = scale * flashVisibility;
+                ring.material.opacity = scale * 0.9 * flashVisibility;
                 flashLight.intensity = lightIntensity;
 
                 if (scale > 0.05) {
@@ -2610,6 +2913,8 @@
             const isArmor = type === 'armor';
             const isTree = type === 'tree';
             const isGround = type === 'ground';
+            const flashVisibility = getFlashScale();
+            if (count > 20) playGameSound('explosion');
 
             // Volumetric debris particles
             const debrisCount = getQualityAdjustedCount(count);
@@ -2765,7 +3070,7 @@
                 const ringMat = new THREE.MeshBasicMaterial({
                     color: color,
                     transparent: true,
-                    opacity: 0.8,
+                    opacity: 0.8 * flashVisibility,
                     side: THREE.DoubleSide
                 });
                 const shockwave = new THREE.Mesh(ringGeo, ringMat);
@@ -2793,12 +3098,12 @@
                 animateRing(performance.now());
 
                 const light = configureQualityOptionalLight(
-                    new THREE.PointLight(color, 3, 20)
+                    new THREE.PointLight(color, 3 * flashVisibility, 20)
                 );
                 light.position.copy(pos);
                 scene.add(light);
 
-                let intensity = 3;
+                let intensity = 3 * flashVisibility;
                 let lastLightFrame = null;
                 const fadeLight = (timestamp) => {
                     const frameScale = lastLightFrame === null
@@ -2828,6 +3133,105 @@
             const el = document.getElementById(screenId);
             if (!el) return;
             el.classList.toggle('hidden', !visible);
+        }
+
+        function getTutorialSteps() {
+            const movementSide = state.leftHanded ? 'lower-right' : 'lower-left';
+            const firingSide = state.leftHanded ? 'lower-left' : 'lower-right';
+            return [
+                {
+                    title: 'Move',
+                    text: `Drag the ${movementSide} area to move your tank. The joystick appears under your thumb.`
+                },
+                {
+                    title: 'Fire',
+                    text: `Hold the ${firingSide} area to fire. Your turret automatically aims at the nearest enemy.`
+                },
+                {
+                    title: 'Choose Upgrades',
+                    text: 'Kills grant XP. Every level pauses the battle and offers three temporary upgrades.'
+                },
+                {
+                    title: 'Earn and Improve',
+                    text: 'Quick kills build combos and permanent coins. Spend coins in the Garage between runs.'
+                }
+            ];
+        }
+
+        function renderTutorialStep() {
+            const steps = getTutorialSteps();
+            const step = steps[state.tutorialStep];
+            document.getElementById('tutorial-step-number').textContent =
+                String(state.tutorialStep + 1);
+            document.getElementById('tutorial-title').textContent = step.title;
+            document.getElementById('tutorial-text').textContent = step.text;
+            document.getElementById('tutorial-next').textContent =
+                state.tutorialStep === steps.length - 1 ? 'Start Battle' : 'Next';
+        }
+
+        function openTutorial(returnTarget = 'playing') {
+            state.tutorialOpen = true;
+            state.tutorialStep = 0;
+            state.tutorialReturnTarget = returnTarget;
+            if (returnTarget === 'playing') state.gamePhase = 'tutorial';
+            setScreenVisibility('settings-screen', false);
+            setScreenVisibility('tutorial-screen', true);
+            setPauseUIVisible(false);
+            syncHUDControls();
+            renderTutorialStep();
+        }
+
+        function finishTutorial() {
+            const returnTarget = state.tutorialReturnTarget;
+            state.tutorialOpen = false;
+            profile.tutorialCompleted = true;
+            saveProfile();
+            setScreenVisibility('tutorial-screen', false);
+            if (returnTarget === 'settings') {
+                state.settingsOpen = true;
+                setScreenVisibility('settings-screen', true);
+                setPauseUIVisible(false);
+            } else {
+                state.gamePhase = 'playing';
+                setPauseUIVisible(true);
+                saveActiveRun();
+            }
+            syncHUDControls();
+        }
+
+        function advanceTutorial() {
+            const steps = getTutorialSteps();
+            if (state.tutorialStep >= steps.length - 1) {
+                finishTutorial();
+                return;
+            }
+            state.tutorialStep++;
+            playUISound();
+            renderTutorialStep();
+        }
+
+        function requestNewRun() {
+            if (!cachedActiveRun) {
+                startGame();
+                return;
+            }
+            state.newRunConfirmOpen = true;
+            setScreenVisibility('new-run-confirm-screen', true);
+        }
+
+        function closeNewRunConfirmation() {
+            state.newRunConfirmOpen = false;
+            setScreenVisibility('new-run-confirm-screen', false);
+        }
+
+        function startConfirmedNewRun() {
+            closeNewRunConfirmation();
+            startGame();
+        }
+
+        function continueConfirmedRun() {
+            closeNewRunConfirmation();
+            continueSavedRun();
         }
 
         function pauseGame() {
@@ -2862,9 +3266,13 @@
             state.gamePhase = 'menu';
             state.settingsOpen = false;
             state.garageOpen = false;
+            state.tutorialOpen = false;
+            state.newRunConfirmOpen = false;
             clearInputState();
             clearCombatScene();
             setScreenVisibility('upgrade-choice-screen', false);
+            setScreenVisibility('tutorial-screen', false);
+            setScreenVisibility('new-run-confirm-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('pause-screen', false);
@@ -2910,6 +3318,7 @@
 
             const now = clock.getElapsedTime();
             state.score = 0;
+            state.runStats = createDefaultRunStats();
             state.xp = 0;
             state.level = 1;
             state.xpToNext = 100;
@@ -2941,6 +3350,8 @@
             state.cameraShake = 0;
             state.settingsOpen = false;
             state.garageOpen = false;
+            state.tutorialOpen = false;
+            state.newRunConfirmOpen = false;
             clearInputState();
 
             const selectedTank = TANK_DESIGNS[state.runTankId];
@@ -2949,6 +3360,8 @@
             updateHUD();
 
             setScreenVisibility('upgrade-choice-screen', false);
+            setScreenVisibility('tutorial-screen', false);
+            setScreenVisibility('new-run-confirm-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('start-screen', false);
             setScreenVisibility('settings-screen', false);
@@ -2958,6 +3371,7 @@
             syncHUDControls();
             updateComboIndicator();
             saveActiveRun();
+            if (!profile.tutorialCompleted) openTutorial('playing');
         }
 
         function continueSavedRun() {
@@ -2970,6 +3384,7 @@
             clearCombatScene();
             const now = clock.getElapsedTime();
             state.score = savedRun.score;
+            state.runStats = { ...savedRun.runStats, upgradeHistory: [...savedRun.runStats.upgradeHistory] };
             state.xp = savedRun.xp;
             state.level = savedRun.level;
             state.xpToNext = savedRun.xpToNext;
@@ -2989,6 +3404,8 @@
             state.gamePhase = 'playing';
             state.settingsOpen = false;
             state.garageOpen = false;
+            state.tutorialOpen = false;
+            state.newRunConfirmOpen = false;
             state.targetEnemy = null;
             state.cameraShake = 0;
             state.lastFireTime = now - CONFIG.fireRate;
@@ -3027,6 +3444,8 @@
                 enemies.push(enemy);
             });
 
+            setScreenVisibility('tutorial-screen', false);
+            setScreenVisibility('new-run-confirm-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('start-screen', false);
             setScreenVisibility('settings-screen', false);
@@ -3042,6 +3461,7 @@
                 setPauseUIVisible(true);
                 syncHUDControls();
                 saveActiveRun();
+                if (!profile.tutorialCompleted) openTutorial('playing');
             }
             return true;
         }
@@ -3126,6 +3546,7 @@
 
             state.currentUpgradeChoices = choices;
             state.gamePhase = 'choosing-upgrade';
+            playGameSound('levelUp');
             clearInputState();
             setPauseUIVisible(false);
             syncHUDControls();
@@ -3142,6 +3563,7 @@
             if (!upgrade || state.upgradeTiers[upgrade.id] >= upgrade.maxTier) return;
 
             state.upgradeTiers[upgrade.id]++;
+            state.runStats.upgradeHistory.push(upgrade.id);
             state.playerStats[upgrade.stat] += upgrade.amount;
             if (upgrade.stat === 'maxHp') {
                 player.maxHp = state.playerStats.maxHp;
@@ -3152,6 +3574,8 @@
             state.currentUpgradeChoices = [];
             setScreenVisibility('upgrade-choice-screen', false);
             showUpgradeNotification(`${upgrade.icon} ${upgrade.description}`);
+            playGameSound('upgrade');
+            triggerHaptic('medium');
             updateHUD();
 
             if (state.pendingUpgradeCount > 0) beginNextUpgradeChoice();
@@ -3217,6 +3641,7 @@
             if (state.comboTimer <= 0) return;
             state.comboTimer = Math.max(0, state.comboTimer - dt);
             if (state.comboTimer === 0) {
+                if (state.comboCount >= 2) playGameSound('comboLost');
                 state.comboCount = 0;
                 state.comboMultiplier = 1;
             }
@@ -3231,7 +3656,15 @@
             const baseCoins = Math.max(1, Math.floor(basePoints / 10));
             const coinReward = Math.max(1, Math.floor(baseCoins * state.comboMultiplier));
             state.score += scoreReward;
+            state.runStats.kills++;
+            state.runStats.highestCombo = Math.max(
+                state.runStats.highestCombo,
+                state.comboCount
+            );
+            state.runStats.coinsEarned += coinReward;
             profile.coins += coinReward;
+            playGameSound('coin');
+            if (state.comboCount >= 2) playGameSound('combo');
             saveProfile();
             updateComboIndicator();
             updateHUD();
@@ -3276,6 +3709,7 @@
             if (!player || player.isDead) return;
 
             updateCombo(dt);
+            state.runStats.elapsedSeconds += dt;
 
             // Player movement
             player.move(dt, new THREE.Vector2(state.input.x, state.input.y));
@@ -3285,7 +3719,7 @@
             if (state.playerStats.regen > 0 && clock.getElapsedTime() - state.lastRegenTime > 1) {
                 if (player.hp < player.maxHp) {
                     player.hp = Math.min(player.maxHp, player.hp + state.playerStats.regen);
-                    document.getElementById('heal-overlay').style.opacity = '0.3';
+                    document.getElementById('heal-overlay').style.opacity = String(0.3 * getFlashScale());
                     setTimeout(() => document.getElementById('heal-overlay').style.opacity = '0', 200);
                     updateHUD();
                 }
@@ -3443,6 +3877,7 @@
                                     );
                                     b.group.position.copy(bulletImpactPosition);
                                     enemy.takeDamage(b.group.userData.damage);
+                                    playGameSound('impact');
 
                                     const enemyColor = ENEMY_TYPES[enemy.type]?.color || 0xff0000;
                                     // Pass enemy type for specific visual effects
@@ -3483,9 +3918,11 @@
                             );
                             b.group.position.copy(bulletImpactPosition);
                             player.takeDamage(b.group.userData.damage);
+                            playGameSound('damage');
+                            triggerHaptic('medium');
                             createExplosion(b.group.position, 14, 0x4ade80, 'armor');
 
-                            document.getElementById('damage-overlay').style.opacity = '0.5';
+                            document.getElementById('damage-overlay').style.opacity = String(0.5 * getFlashScale());
                             setTimeout(() => document.getElementById('damage-overlay').style.opacity = '0', 150);
 
                             updateHUD();
@@ -3614,7 +4051,8 @@
             camera.lookAt(player.mesh.position.x, 0, player.mesh.position.z + 5);
 
             if (state.cameraShake > 0) {
-                const shakeScale = state.cameraMode === 'wide' ? 0.55 : 1;
+                const shakeScale = (state.cameraMode === 'wide' ? 0.55 : 1) *
+                    getCameraShakeScale();
                 camera.position.x += (Math.random() - 0.5) * state.cameraShake * shakeScale;
                 camera.position.z += (Math.random() - 0.5) * state.cameraShake * shakeScale;
                 state.cameraShake = Math.max(0, state.cameraShake - dt * 2);
@@ -3651,6 +4089,34 @@
             }
         }
 
+        function formatDuration(seconds) {
+            const totalSeconds = Math.max(0, Math.floor(seconds));
+            const minutes = Math.floor(totalSeconds / 60);
+            const remainder = String(totalSeconds % 60).padStart(2, '0');
+            return `${minutes}:${remainder}`;
+        }
+
+        function renderRunResults() {
+            const isScoreRecord = state.score > profile.bestScore;
+            const isLevelRecord = state.level > profile.bestLevel;
+            document.getElementById('result-coins').textContent =
+                formatCompactNumber(state.runStats.coinsEarned);
+            document.getElementById('result-kills').textContent =
+                formatCompactNumber(state.runStats.kills);
+            document.getElementById('result-combo').textContent =
+                String(state.runStats.highestCombo);
+            document.getElementById('result-time').textContent =
+                formatDuration(state.runStats.elapsedSeconds);
+            document.getElementById('result-tank').textContent =
+                TANK_DESIGNS[state.runTankId]?.name || TANK_DESIGNS.vanguard.name;
+            document.getElementById('result-upgrades').textContent =
+                String(state.runStats.upgradeHistory.length);
+            const recordMessages = [];
+            if (isScoreRecord) recordMessages.push('New best score!');
+            if (isLevelRecord) recordMessages.push('New best level!');
+            document.getElementById('result-record').textContent = recordMessages.join(' • ');
+        }
+
         function endGame() {
             if (state.gamePhase === 'gameover') return;
 
@@ -3658,17 +4124,24 @@
             state.gamePhase = 'gameover';
             state.settingsOpen = false;
             state.garageOpen = false;
+            state.tutorialOpen = false;
+            state.newRunConfirmOpen = false;
             state.comboCount = 0;
             state.comboTimer = 0;
             state.comboMultiplier = 1;
+            playGameSound('gameOver');
+            triggerHaptic('heavy');
             state.pendingUpgradeCount = 0;
             state.currentUpgradeChoices = [];
             clearInputState();
+            renderRunResults();
             updateBestProfile();
             clearActiveRunSave();
             document.getElementById('final-score').textContent = state.score;
             document.getElementById('final-level').textContent = state.level;
             setScreenVisibility('upgrade-choice-screen', false);
+            setScreenVisibility('tutorial-screen', false);
+            setScreenVisibility('new-run-confirm-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('pause-screen', false);
@@ -3739,7 +4212,9 @@
                     const touch = e.changedTouches[i];
                     if (!isInTouchControlZone(touch)) continue;
 
-                    if (touch.clientX < window.innerWidth / 2) {
+                    const isLeftHalf = touch.clientX < window.innerWidth / 2;
+                    const isMovementSide = state.leftHanded ? !isLeftHalf : isLeftHalf;
+                    if (isMovementSide) {
                         if (moveTouch === null) {
                             moveTouch = touch.identifier;
                             stickBase.style.display = 'block';
@@ -3811,7 +4286,7 @@
                 if (state.gamePhase === 'playing') pauseGame();
                 else {
                     clearInputState();
-                    if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused') {
+                    if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused' || state.gamePhase === 'tutorial') {
                         saveActiveRun();
                     }
                 }
@@ -3847,12 +4322,48 @@
 
         document.getElementById('btn-start').addEventListener('click', (e) => {
             e.stopPropagation();
-            startGame();
+            requestNewRun();
+        });
+
+        document.getElementById('confirm-continue-run').addEventListener('click', (e) => {
+            e.stopPropagation();
+            continueConfirmedRun();
+        });
+
+        document.getElementById('confirm-new-run').addEventListener('click', (e) => {
+            e.stopPropagation();
+            startConfirmedNewRun();
+        });
+
+        document.getElementById('cancel-new-run').addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeNewRunConfirmation();
+        });
+
+        document.getElementById('tutorial-next').addEventListener('click', (e) => {
+            e.stopPropagation();
+            advanceTutorial();
+        });
+
+        document.getElementById('tutorial-skip').addEventListener('click', (e) => {
+            e.stopPropagation();
+            finishTutorial();
         });
 
         document.getElementById('btn-restart').addEventListener('click', (e) => {
             e.stopPropagation();
             startGame();
+        });
+
+        document.getElementById('btn-results-garage').addEventListener('click', (e) => {
+            e.stopPropagation();
+            quitToMenu();
+            openGarage();
+        });
+
+        document.getElementById('btn-results-menu').addEventListener('click', (e) => {
+            e.stopPropagation();
+            quitToMenu();
         });
 
         document.getElementById('btn-pause').addEventListener('click', (e) => {
@@ -3900,6 +4411,40 @@
             toggleQualityMode();
         });
 
+        document.getElementById('toggle-haptics-panel').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleHaptics();
+        });
+
+        document.getElementById('toggle-shake-panel').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleCameraShakeMode();
+        });
+
+        document.getElementById('toggle-flashes-panel').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleReducedFlashes();
+        });
+
+        document.getElementById('toggle-handed-panel').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleHandedControls();
+        });
+
+        document.getElementById('toggle-hud-scale-panel').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleHudScale();
+        });
+
+        document.getElementById('replay-tutorial-panel').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openTutorial('settings');
+        });
+
+        document.getElementById('effects-volume').addEventListener('input', (e) => {
+            setEffectsVolume(e.target.value);
+        });
+
         document.getElementById('close-settings-panel').addEventListener('click', (e) => {
             e.stopPropagation();
             closeSettings();
@@ -3921,11 +4466,16 @@
             handleAppStateChange(isActive) {
                 if (isActive) return;
                 if (state.gamePhase === 'playing') pauseGame();
-                else if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused') {
+                else if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused' || state.gamePhase === 'tutorial') {
                     saveActiveRun();
                 }
             },
             handleBackButton() {
+                if (state.newRunConfirmOpen) {
+                    closeNewRunConfirmation();
+                    return true;
+                }
+                if (state.tutorialOpen) return true;
                 if (state.garageOpen) {
                     closeGarage();
                     return true;

@@ -91,10 +91,45 @@
         </div>
     </div>
 
+    <div id="new-run-confirm-screen" class="screen hidden" role="dialog" aria-modal="true">
+        <div class="confirmation-panel">
+            <h1>Replace Run?</h1>
+            <p>A living run is available. Starting a new adventure will replace it.</p>
+            <button type="button" class="btn" id="confirm-continue-run">Continue Existing</button>
+            <button type="button" class="btn btn-restart" id="confirm-new-run">Start New Run</button>
+            <button type="button" class="btn" id="cancel-new-run">Cancel</button>
+        </div>
+    </div>
+
+    <div id="tutorial-screen" class="screen hidden" role="dialog" aria-modal="true">
+        <div class="tutorial-panel">
+            <div class="tutorial-step-count">Tutorial <span id="tutorial-step-number">1</span>/4</div>
+            <h1 id="tutorial-title">Move</h1>
+            <p id="tutorial-text">Drag the lower-left area to move your tank.</p>
+            <div class="tutorial-actions">
+                <button type="button" class="btn" id="tutorial-next">Next</button>
+                <button type="button" class="garage-action" id="tutorial-skip">Skip Tutorial</button>
+            </div>
+        </div>
+    </div>
+
     <div id="game-over-screen" class="screen hidden">
-        <h1>💀 Defeated</h1>
-        <h2>Score: <span id="final-score">0</span> • Level: <span id="final-level">1</span></h2>
-        <button type="button" class="btn btn-restart" id="btn-restart">Try Again</button>
+        <div class="results-panel">
+            <h1>💀 Defeated</h1>
+            <h2>Score: <span id="final-score">0</span> • Level: <span id="final-level">1</span></h2>
+            <div class="results-grid">
+                <div><span>💰 Run coins</span><strong id="result-coins">0</strong></div>
+                <div><span>🎯 Enemies</span><strong id="result-kills">0</strong></div>
+                <div><span>🔥 Best combo</span><strong id="result-combo">0</strong></div>
+                <div><span>⏱ Survival</span><strong id="result-time">0:00</strong></div>
+                <div><span>🛡 Tank</span><strong id="result-tank">Vanguard</strong></div>
+                <div><span>🌟 Upgrades</span><strong id="result-upgrades">0</strong></div>
+            </div>
+            <div id="result-record" class="result-record"></div>
+            <button type="button" class="btn btn-restart" id="btn-restart">Try Again</button>
+            <button type="button" class="btn btn-garage" id="btn-results-garage">Garage</button>
+            <button type="button" class="btn" id="btn-results-menu">Main Menu</button>
+        </div>
     </div>
 
 
@@ -122,17 +157,30 @@
                 <button type="button" class="hud-icon-btn wide" id="toggle-camera-panel">Camera: Follow</button>
                 <button type="button" class="hud-icon-btn wide" id="toggle-assist-panel">Assist: Off</button>
                 <button type="button" class="hud-icon-btn wide" id="toggle-quality-panel">Quality: Medium</button>
+                <button type="button" class="hud-icon-btn wide" id="toggle-haptics-panel">Haptics: On</button>
+                <button type="button" class="hud-icon-btn wide" id="toggle-shake-panel">Shake: Full</button>
+                <button type="button" class="hud-icon-btn wide" id="toggle-flashes-panel">Flashes: Full</button>
+                <button type="button" class="hud-icon-btn wide" id="toggle-handed-panel">Controls: Standard</button>
+                <button type="button" class="hud-icon-btn wide" id="toggle-hud-scale-panel">HUD: Normal</button>
+                <button type="button" class="hud-icon-btn wide" id="replay-tutorial-panel">Replay Tutorial</button>
                 <button type="button" class="hud-icon-btn wide" id="close-settings-panel">Close</button>
             </div>
             <div class="settings-row">
+                <label class="settings-volume" for="effects-volume">
+                    <span>Effects volume</span>
+                    <strong id="effects-volume-value">70%</strong>
+                </label>
+                <input id="effects-volume" type="range" min="0" max="100" step="5" value="70">
                 <div class="settings-label">Camera</div>
                 <div class="settings-note">Follow = close combat. Wide = more view.</div>
                 <div class="settings-label">Control assist</div>
                 <div class="settings-note">Assist keeps auto-aim sticky and input easy.</div>
                 <div class="settings-label">Quality</div>
                 <div class="settings-note">Low saves battery. Medium is balanced. High keeps full detail.</div>
+                <div class="settings-label">Accessibility</div>
+                <div class="settings-note">Swap thumb zones, enlarge the HUD, reduce flashes, camera shake, or vibration.</div>
                 <div class="settings-label">Sound</div>
-                <div class="settings-note">UI and pause beeps. Full combat sound is planned for the APK.</div>
+                <div class="settings-note">Arcade firing, impacts, explosions, combos, coins, upgrades, garage, and game-over effects.</div>
             </div>
         </div>
     </div>

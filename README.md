@@ -4,16 +4,17 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phases 1–7 now provide the stabilized offline APK, optimized rendering, consistent timing/collision, portrait controls, continuation, choice upgrades, combo economy, and three-tank garage. Phase 8 adds player-controlled rendering quality:
+Phases 1–8 provide the stable offline APK, optimization, consistent combat, portrait controls, continuation, choice upgrades, economy, garage, tanks, and quality modes. Phase 9 completes the recommended polish and balance foundation:
 
-- Low, Medium, and High cycle from the settings panel and save permanently;
-- Low uses pixel ratio 0.8, basic 512 shadows, 35% distant/ambient detail, 50% effect particles, and no optional point lights;
-- Medium is the default with pixel ratio 1.0, PCF shadows, 65–67% distant/ambient detail, 75% effect particles, and optional lights;
-- High retains full Phase 7 detail, soft shadows, all particles/decorations/lights, and pixel ratio up to 1.25;
-- foreground trees, rocks, colliders, enemies, stats, spawn rules, hitboxes, XP, score, coins, and garage prices never change with quality;
-- quality switches existing instanced scene counts without rebuilding or moving the biome;
-- older profiles safely default to Medium;
-- all earlier saving, upgrade, portrait, performance, consistency, economy, offline, and Android behavior remains active.
+- offline procedural arcade sci-fi effects cover three player weapons, enemies, impacts, explosions, damage, combos, coins, upgrades, garage actions, UI, and game over;
+- official optional Android haptics are rate-limited and saved;
+- effects volume, camera-shake mode, reduced flashes, Left-handed controls, and Large HUD are available in Settings;
+- a four-step first-run tutorial follows the selected handedness and can be replayed;
+- living saves are protected by Continue, Replace, and Cancel confirmation;
+- defeat shows coins, kills, best combo, survival time, tank, upgrade count, and new records;
+- local run statistics persist through Continue and provide data for future economy tuning;
+- armor now uses diminishing protection instead of direct subtraction, preventing armor/regeneration invulnerability;
+- all previous quality, saving, garage, portrait, performance, consistency, offline, and Android behavior remains active.
 
 Detailed reports are in:
 
@@ -23,8 +24,9 @@ Detailed reports are in:
 - `docs/phase6-save-upgrade-report.md`
 - `docs/phase7-garage-economy-report.md`
 - `docs/phase8-quality-report.md`
+- `docs/phase9-polish-balance-report.md`
 
-The complete arcade sci-fi audio set remains for the next phase. Final-release signing, icons, splash artwork, and store work are intentionally not part of Phase 8.
+The next approved content stage is Realm Guardian bosses, followed by strategic enemies, upgrade evolutions, mastery/achievements, daily challenges, and extra modes. Final-release signing and store work remain separate.
 
 ## Project structure
 

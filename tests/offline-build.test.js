@@ -44,6 +44,8 @@ test('Capacitor identity and offline web directory are fixed', () => {
   assert.equal(config.appName, 'Tank Realms');
   assert.equal(config.webDir, 'www');
   assert.equal(config.android.allowMixedContent, false);
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(packageJson.dependencies['@capacitor/haptics'], '8.0.2');
 });
 
 test('Android wrapper is portrait, Android 9+, fullscreen, and network-independent', () => {
