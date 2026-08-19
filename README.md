@@ -4,26 +4,27 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phase 1 stabilized the original game. Phase 2 created the offline Android APK. Phase 3 reduced rendering and memory pressure. Phase 4 normalized timing and collision. Phase 5 now provides the approved portrait controls and responsive HUD:
+Phase 1 stabilized the game, Phase 2 created the offline APK, Phase 3 optimized rendering, Phase 4 normalized timing/collision, and Phase 5 added the portrait HUD. Phase 6 now adds reliable progress and temporary upgrade choices:
 
-- score, level/XP, and health panels use a compact non-overlapping portrait grid;
-- quick settings and pause controls sit on a separate row below the HUD;
-- the biome, upgrade, and enemy notices fit narrow portrait screens;
-- the upper 30% is reserved for HUD interaction and cannot accidentally move or fire;
-- the lower-left floating joystick and lower-right hold-to-fire zones remain invisible;
-- all four safe-area insets, dynamic viewport height, narrow widths, and short screens are handled;
-- automated layout budgets cover 320–600 pixel portrait widths and 640–915 pixel heights;
-- Phase 3 performance and Phase 4 consistency improvements remain active;
-- the browser and APK remain fully offline;
-- Android identity remains `com.thiltete.tankrealms`, portrait-only, with Android 9 as the minimum.
+- permanent profile and living-run data use separate versioned local saves;
+- a Continue Run button appears only for a valid living run;
+- player health/position, enemies, XP, level, biome, and temporary upgrades restore after closing the app;
+- autosave runs every five seconds and on pause, menu exit, upgrade choice, page close, and Android backgrounding;
+- defeat clears temporary run progress but preserves best score, best level, and settings;
+- corrupt, outdated, edited, or impossible save values are safely rejected or clamped;
+- every level-up freezes combat and shows three unique available choices;
+- speed, damage, fire rate, max health, regeneration, armor, and triple shot have safe tier caps;
+- the old fixed automatic upgrade schedule is removed so each level grants one chosen upgrade;
+- all earlier performance, consistency, portrait, offline, and Android behavior remains active.
 
 Detailed reports are in:
 
 - `docs/phase3-performance-report.md`
 - `docs/phase4-consistency-report.md`
 - `docs/phase5-portrait-layout-report.md`
+- `docs/phase6-save-upgrade-report.md`
 
-The approved random upgrades, combo, coins, garage, three tank designs, saving, quality levels, and complete audio will be built in later phases.
+Combo rewards, coins, the garage, three tank designs, permanent per-tank upgrades, quality levels, and complete audio will be built in later phases.
 
 ## Project structure
 

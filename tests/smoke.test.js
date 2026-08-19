@@ -48,7 +48,7 @@ function collectResources(roots) {
   return { geometries, materials };
 }
 
-function createHarness() {
+function createHarness(storageSeed = {}) {
   const html = fs.readFileSync(htmlPath, 'utf8');
   const gameSource = fs.readFileSync(gamePath, 'utf8');
   const dom = new JSDOM(html, {
@@ -57,6 +57,9 @@ function createHarness() {
     runScripts: 'outside-only'
   });
   const { window } = dom;
+  Object.entries(storageSeed).forEach(([key, value]) => {
+    window.localStorage.setItem(key, value);
+  });
 
   Object.defineProperty(window, 'innerWidth', { value: 390, writable: true });
   Object.defineProperty(window, 'innerHeight', { value: 844, writable: true });
@@ -114,7 +117,10 @@ function createHarness() {
   const testApi = `
     window.__tankTest = {
       state: () => state,
+      profile: () => profile,
+      cachedActiveRun: () => cachedActiveRun,
       player: () => player,
+      enemies: () => enemies,
       renderer: () => renderer,
       scene: () => scene,
       bullets: () => bullets,
@@ -133,6 +139,12 @@ function createHarness() {
         hemisphereLight
       ].filter(Boolean),
       startGame,
+      continueSavedRun,
+      saveActiveRun,
+      clearActiveRunSave,
+      sanitizeActiveRun,
+      addXP,
+      applyUpgradeChoice,
       pauseGame,
       resumeGame,
       openSettings,
@@ -256,6 +268,35 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(document.getElementById('hud-quickbar').classList.contains('show'), false);
   });
 
+  await t.test('pauses combat for three unique level-up choices', () => {
+    api.startGame();
+    api.addXP(100);
+
+    assert.equal(api.state().level, 2);
+    assert.equal(api.state().gamePhase, 'choosing-upgrade');
+    assert.equal(api.state().pendingUpgradeCount, 1);
+    assert.equal(api.state().currentUpgradeChoices.length, 3);
+    assert.equal(new Set(api.state().currentUpgradeChoices).size, 3);
+    assert.equal(
+      document.getElementById('upgrade-choice-screen').classList.contains('hidden'),
+      false
+    );
+    assert.equal(document.querySelectorAll('.upgrade-choice-card').length, 3);
+    assert.equal(document.getElementById('btn-pause').classList.contains('show'), false);
+    assert.equal(window.TankRealmsApp.handleBackButton(), true);
+    assert.equal(api.state().gamePhase, 'choosing-upgrade');
+
+    const selectedUpgrade = api.state().currentUpgradeChoices[0];
+    api.applyUpgradeChoice(selectedUpgrade);
+    assert.equal(api.state().upgradeTiers[selectedUpgrade], 1);
+    assert.equal(api.state().pendingUpgradeCount, 0);
+    assert.equal(api.state().gamePhase, 'playing');
+    assert.equal(
+      document.getElementById('upgrade-choice-screen').classList.contains('hidden'),
+      true
+    );
+  });
+
   await t.test('reserves the upper portrait area for HUD controls', () => {
     assert.equal(api.getTouchControlTop(), 844 * 0.3);
   });
@@ -370,6 +411,46 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(api.bullets().length, 0);
   });
 
+  await t.test('clamps unsafe values from edited save data', () => {
+    const unsafeRun = api.sanitizeActiveRun({
+      version: 1,
+      alive: true,
+      level: 999999,
+      xp: 999999,
+      xpToNext: 10,
+      currentBiome: 999,
+      upgradeTiers: {
+        speed: 999,
+        damage: 999,
+        fireRate: 999,
+        maxHp: 999,
+        regen: 999,
+        armor: 999,
+        multishot: 999
+      },
+      player: {
+        hp: 999999,
+        position: { x: 999, z: -999 },
+        rotationY: 999
+      },
+      enemies: [{ type: 'not-real', hp: 999 }]
+    });
+
+    assert.equal(unsafeRun.level, 10000);
+    assert.equal(unsafeRun.currentBiome, 5);
+    assert.equal(unsafeRun.playerStats.speed, 205);
+    assert.equal(unsafeRun.playerStats.damage, 300);
+    assert.equal(unsafeRun.playerStats.fireRate, 220);
+    assert.equal(unsafeRun.playerStats.maxHp, 300);
+    assert.equal(unsafeRun.playerStats.armor, 40);
+    assert.equal(unsafeRun.playerStats.regen, 10);
+    assert.equal(unsafeRun.playerStats.multishot, 1);
+    assert.equal(unsafeRun.player.hp, 300);
+    assert.equal(unsafeRun.player.position.x, 44);
+    assert.equal(unsafeRun.player.position.z, -44);
+    assert.equal(unsafeRun.enemies.length, 0);
+  });
+
   await t.test('responds safely to native app background and Back events', () => {
     api.startGame();
     window.TankRealmsApp.handleAppStateChange(false);
@@ -383,6 +464,38 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
 
     api.quitToMenu();
     assert.equal(window.TankRealmsApp.handleBackButton(), false);
+  });
+
+  await t.test('saves and resumes a living run from the menu', () => {
+    api.startGame();
+    api.state().score = 4321;
+    api.player().hp = 73;
+    api.player().mesh.position.set(7, 0, -9);
+    const savedEnemy = api.makeEnemy('heavy', -6, 8);
+    savedEnemy.hp = 91;
+
+    assert.equal(api.saveActiveRun(), true);
+    api.quitToMenu();
+    assert.equal(document.getElementById('btn-continue').classList.contains('available'), true);
+    assert.equal(api.continueSavedRun(), true);
+    assert.equal(api.state().score, 4321);
+    assert.equal(api.player().hp, 73);
+    assert.equal(api.player().mesh.position.x, 7);
+    assert.equal(api.player().mesh.position.z, -9);
+    assert.equal(api.enemies().length, 1);
+    assert.equal(api.enemies()[0].type, 'heavy');
+    assert.equal(api.enemies()[0].hp, 91);
+  });
+
+  await t.test('defeat clears only the active run and records best progress', () => {
+    api.state().score = 9876;
+    api.state().level = 8;
+    api.endGame();
+    assert.equal(window.localStorage.getItem('tank_realms_active_run_v1'), null);
+    assert.equal(api.cachedActiveRun(), null);
+    assert.equal(api.profile().bestScore, 9876);
+    assert.equal(api.profile().bestLevel, 8);
+    assert.equal(document.getElementById('btn-continue').classList.contains('available'), false);
   });
 
   await t.test('reuses projectile objects instead of allocating every shot', () => {
@@ -437,6 +550,86 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(document.getElementById('start-screen').classList.contains('hidden'), false);
   });
 
+  harness.dom.window.close();
+});
+
+test('active run survives a complete page reload', () => {
+  const firstSession = createHarness();
+  firstSession.api.startGame();
+  firstSession.api.state().score = 2468;
+  firstSession.api.player().hp = 64;
+  firstSession.api.player().mesh.position.set(-11, 0, 13);
+  firstSession.api.saveActiveRun();
+  const savedRun = firstSession.window.localStorage.getItem('tank_realms_active_run_v1');
+  firstSession.dom.window.close();
+
+  const secondSession = createHarness({ tank_realms_active_run_v1: savedRun });
+  assert.equal(secondSession.api.cachedActiveRun().score, 2468);
+  assert.equal(
+    secondSession.window.document.getElementById('btn-continue').classList.contains('available'),
+    true
+  );
+  assert.equal(secondSession.api.continueSavedRun(), true);
+  assert.equal(secondSession.api.player().hp, 64);
+  assert.equal(secondSession.api.player().mesh.position.x, -11);
+  assert.equal(secondSession.api.player().mesh.position.z, 13);
+  secondSession.dom.window.close();
+});
+
+test('pending upgrade choices survive a page reload', () => {
+  const firstSession = createHarness();
+  firstSession.api.startGame();
+  firstSession.api.addXP(100);
+  const originalChoices = [...firstSession.api.state().currentUpgradeChoices];
+  const savedRun = firstSession.window.localStorage.getItem('tank_realms_active_run_v1');
+  firstSession.dom.window.close();
+
+  const secondSession = createHarness({ tank_realms_active_run_v1: savedRun });
+  assert.equal(secondSession.api.continueSavedRun(), true);
+  assert.equal(secondSession.api.state().gamePhase, 'choosing-upgrade');
+  assert.deepEqual(Array.from(secondSession.api.state().currentUpgradeChoices), originalChoices);
+  assert.equal(
+    secondSession.window.document.querySelectorAll('.upgrade-choice-card').length,
+    3
+  );
+  secondSession.dom.window.close();
+});
+
+test('corrupt and outdated save data cannot block startup', () => {
+  const harness = createHarness({
+    tank_realms_profile_v1: '{broken-json',
+    tank_realms_active_run_v1: JSON.stringify({ version: 99, alive: true })
+  });
+
+  assert.equal(harness.api.state().gamePhase, 'menu');
+  assert.equal(harness.api.cachedActiveRun(), null);
+  assert.equal(harness.window.localStorage.getItem('tank_realms_active_run_v1'), null);
+  assert.equal(
+    harness.window.document.getElementById('btn-continue').classList.contains('available'),
+    false
+  );
+  harness.dom.window.close();
+});
+
+test('saved settings load into a new session', () => {
+  const harness = createHarness({
+    tank_realms_profile_v1: JSON.stringify({
+      version: 1,
+      bestScore: 500,
+      bestLevel: 6,
+      settings: {
+        soundEnabled: true,
+        cameraMode: 'wide',
+        controlAssist: true
+      }
+    })
+  });
+
+  assert.equal(harness.api.state().soundEnabled, true);
+  assert.equal(harness.api.state().cameraMode, 'wide');
+  assert.equal(harness.api.state().controlAssist, true);
+  assert.equal(harness.api.profile().bestScore, 500);
+  assert.equal(harness.api.profile().bestLevel, 6);
   harness.dom.window.close();
 });
 

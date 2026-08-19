@@ -146,20 +146,21 @@
             berserker: { name: "Berserker", color: 0xec4899, hp: 80, speed: 1.3, damage: 18, fireRate: 0.7, size: 1.2, points: 250, desc: "Aggressive charger" }
         };
 
-        // Player Upgrades
-        const UPGRADES = [
-            { level: 2, stat: 'speed', amount: 15, text: '⚡ Speed +15%' },
-            { level: 3, stat: 'damage', amount: 20, text: '💥 Damage +20%' },
-            { level: 4, stat: 'regen', amount: 2, text: '🔄 Regen +2/s' },
-            { level: 5, stat: 'armor', amount: 10, text: '🛡️ Armor +10' },
-            { level: 6, stat: 'fireRate', amount: 20, text: '🔥 Fire Rate +20%' },
-            { level: 7, stat: 'speed', amount: 15, text: '⚡ Speed +15%' },
-            { level: 8, stat: 'damage', amount: 25, text: '💥 Damage +25%' },
-            { level: 9, stat: 'maxHp', amount: 30, text: '❤️ Max HP +30' },
-            { level: 10, stat: 'multishot', amount: 1, text: '🎯 Triple Shot!' },
-            { level: 12, stat: 'armor', amount: 20, text: '🛡️ Armor +20' },
-            { level: 15, stat: 'regen', amount: 5, text: '🔄 Regen +5/s' },
+        // Temporary run upgrades. All values are capped so long runs cannot
+        // create unsafe speed, fire-rate, armor, or projectile counts.
+        const UPGRADE_DEFINITIONS = [
+            { id: 'speed', stat: 'speed', icon: '⚡', name: 'Engine Boost', amount: 15, maxTier: 7, minLevel: 2, description: 'Movement speed +15%' },
+            { id: 'damage', stat: 'damage', icon: '💥', name: 'Plasma Power', amount: 20, maxTier: 10, minLevel: 2, description: 'Damage +20%' },
+            { id: 'fireRate', stat: 'fireRate', icon: '🔥', name: 'Rapid Loader', amount: 15, maxTier: 8, minLevel: 2, description: 'Fire rate +15%' },
+            { id: 'maxHp', stat: 'maxHp', icon: '❤️', name: 'Reinforced Hull', amount: 20, maxTier: 10, minLevel: 2, description: 'Maximum health +20' },
+            { id: 'regen', stat: 'regen', icon: '🔄', name: 'Repair Nanites', amount: 1, maxTier: 10, minLevel: 4, description: 'Health regeneration +1/s' },
+            { id: 'armor', stat: 'armor', icon: '🛡️', name: 'Armor Plating', amount: 5, maxTier: 8, minLevel: 5, description: 'Armor +5' },
+            { id: 'multishot', stat: 'multishot', icon: '🎯', name: 'Triple Shot', amount: 1, maxTier: 1, minLevel: 10, description: 'Fire three plasma bolts' }
         ];
+        const UPGRADE_BY_ID = new Map(UPGRADE_DEFINITIONS.map(upgrade => [upgrade.id, upgrade]));
+        const SAVE_VERSION = 1;
+        const PROFILE_STORAGE_KEY = 'tank_realms_profile_v1';
+        const ACTIVE_RUN_STORAGE_KEY = 'tank_realms_active_run_v1';
 
         const CONFIG = {
             playerSpeed: 18,
@@ -242,6 +243,27 @@
             return { ...DEFAULT_PLAYER_STATS };
         }
 
+        function createDefaultUpgradeTiers() {
+            return Object.fromEntries(UPGRADE_DEFINITIONS.map(upgrade => [upgrade.id, 0]));
+        }
+
+        function createDefaultProfile() {
+            return {
+                version: SAVE_VERSION,
+                bestScore: 0,
+                bestLevel: 1,
+                settings: {
+                    soundEnabled: false,
+                    cameraMode: 'follow',
+                    controlAssist: false
+                }
+            };
+        }
+
+        let profile = createDefaultProfile();
+        let cachedActiveRun = null;
+        let storageAvailable = true;
+
         let state = {
             gamePhase: 'menu', // menu | playing | paused | gameover
             isPlaying: false,
@@ -263,7 +285,11 @@
             soundEnabled: false,
             cameraMode: 'follow',
             controlAssist: false,
-            settingsOpen: false
+            settingsOpen: false,
+            upgradeTiers: createDefaultUpgradeTiers(),
+            pendingUpgradeCount: 0,
+            currentUpgradeChoices: [],
+            lastAutoSaveTime: 0
         };
 
         let audioCtx = null;
@@ -372,6 +398,255 @@
             state.input.y = 0;
             state.input.isFiring = false;
             resetInputController();
+        }
+
+        function clampSavedNumber(value, min, max, fallback, integer = false) {
+            const number = Number(value);
+            if (!Number.isFinite(number)) return fallback;
+            const clamped = Math.max(min, Math.min(max, number));
+            return integer ? Math.floor(clamped) : clamped;
+        }
+
+        function getStatsFromUpgradeTiers(upgradeTiers) {
+            const stats = createDefaultPlayerStats();
+            UPGRADE_DEFINITIONS.forEach(upgrade => {
+                const tier = clampSavedNumber(
+                    upgradeTiers?.[upgrade.id],
+                    0,
+                    upgrade.maxTier,
+                    0,
+                    true
+                );
+                stats[upgrade.stat] += upgrade.amount * tier;
+            });
+            return stats;
+        }
+
+        function sanitizeUpgradeTiers(savedTiers) {
+            const tiers = createDefaultUpgradeTiers();
+            UPGRADE_DEFINITIONS.forEach(upgrade => {
+                tiers[upgrade.id] = clampSavedNumber(
+                    savedTiers?.[upgrade.id],
+                    0,
+                    upgrade.maxTier,
+                    0,
+                    true
+                );
+            });
+            return tiers;
+        }
+
+        function readStorageJson(key) {
+            if (!storageAvailable) return null;
+            try {
+                const rawValue = window.localStorage.getItem(key);
+                if (!rawValue) return null;
+                try {
+                    return JSON.parse(rawValue);
+                } catch {
+                    window.localStorage.removeItem(key);
+                    return null;
+                }
+            } catch {
+                storageAvailable = false;
+                return null;
+            }
+        }
+
+        function writeStorageJson(key, value) {
+            if (!storageAvailable) return false;
+            try {
+                window.localStorage.setItem(key, JSON.stringify(value));
+                return true;
+            } catch {
+                storageAvailable = false;
+                return false;
+            }
+        }
+
+        function removeStorageValue(key) {
+            if (!storageAvailable) return;
+            try {
+                window.localStorage.removeItem(key);
+            } catch {
+                storageAvailable = false;
+            }
+        }
+
+        function sanitizeProfile(savedProfile) {
+            const safeProfile = createDefaultProfile();
+            if (!savedProfile || savedProfile.version !== SAVE_VERSION) return safeProfile;
+
+            safeProfile.bestScore = clampSavedNumber(savedProfile.bestScore, 0, 1e12, 0, true);
+            safeProfile.bestLevel = clampSavedNumber(savedProfile.bestLevel, 1, 10000, 1, true);
+            safeProfile.settings.soundEnabled = savedProfile.settings?.soundEnabled === true;
+            safeProfile.settings.cameraMode = savedProfile.settings?.cameraMode === 'wide' ? 'wide' : 'follow';
+            safeProfile.settings.controlAssist = savedProfile.settings?.controlAssist === true;
+            return safeProfile;
+        }
+
+        function saveProfile() {
+            profile.version = SAVE_VERSION;
+            profile.settings = {
+                soundEnabled: state.soundEnabled,
+                cameraMode: state.cameraMode,
+                controlAssist: state.controlAssist
+            };
+            writeStorageJson(PROFILE_STORAGE_KEY, profile);
+        }
+
+        function updateBestProfile() {
+            profile.bestScore = Math.max(profile.bestScore, Math.floor(state.score));
+            profile.bestLevel = Math.max(profile.bestLevel, Math.floor(state.level));
+            saveProfile();
+        }
+
+        function sanitizePosition(savedPosition) {
+            return {
+                x: clampSavedNumber(savedPosition?.x, -44, 44, 0),
+                z: clampSavedNumber(savedPosition?.z, -44, 44, 0)
+            };
+        }
+
+        function sanitizeActiveRun(savedRun) {
+            if (!savedRun || savedRun.version !== SAVE_VERSION || savedRun.alive !== true) return null;
+
+            const upgradeTiers = sanitizeUpgradeTiers(savedRun.upgradeTiers);
+            const playerStats = getStatsFromUpgradeTiers(upgradeTiers);
+            const playerHp = clampSavedNumber(savedRun.player?.hp, 0, playerStats.maxHp, 0);
+            if (playerHp <= 0) return null;
+
+            const level = clampSavedNumber(savedRun.level, 1, 10000, 1, true);
+            const xpToNext = clampSavedNumber(savedRun.xpToNext, 1, 1e12, 100, true);
+            const pendingUpgradeCount = clampSavedNumber(
+                savedRun.pendingUpgradeCount,
+                0,
+                20,
+                0,
+                true
+            );
+            const uniqueChoiceIds = [...new Set(
+                Array.isArray(savedRun.currentUpgradeChoices)
+                    ? savedRun.currentUpgradeChoices.filter(id => UPGRADE_BY_ID.has(id))
+                    : []
+            )].slice(0, 3);
+
+            const enemies = Array.isArray(savedRun.enemies)
+                ? savedRun.enemies.slice(0, 12).flatMap(savedEnemy => {
+                    const typeData = ENEMY_TYPES[savedEnemy?.type];
+                    if (!typeData) return [];
+                    return [{
+                        type: savedEnemy.type,
+                        hp: clampSavedNumber(savedEnemy.hp, 1, typeData.hp, typeData.hp),
+                        position: sanitizePosition(savedEnemy.position),
+                        rotationY: clampSavedNumber(
+                            savedEnemy.rotationY,
+                            -Math.PI * 2,
+                            Math.PI * 2,
+                            0
+                        )
+                    }];
+                })
+                : [];
+
+            return {
+                version: SAVE_VERSION,
+                alive: true,
+                savedAt: clampSavedNumber(savedRun.savedAt, 0, Number.MAX_SAFE_INTEGER, Date.now(), true),
+                score: clampSavedNumber(savedRun.score, 0, 1e12, 0, true),
+                xp: clampSavedNumber(savedRun.xp, 0, xpToNext - 1, 0),
+                level,
+                xpToNext,
+                currentBiome: clampSavedNumber(savedRun.currentBiome, 0, BIOMES.length - 1, 0, true),
+                upgradeTiers,
+                playerStats,
+                player: {
+                    hp: playerHp,
+                    position: sanitizePosition(savedRun.player?.position),
+                    rotationY: clampSavedNumber(
+                        savedRun.player?.rotationY,
+                        -Math.PI * 2,
+                        Math.PI * 2,
+                        0
+                    )
+                },
+                enemies,
+                enemiesIntroduced: Array.isArray(savedRun.enemiesIntroduced)
+                    ? savedRun.enemiesIntroduced.filter(type => ENEMY_TYPES[type])
+                    : [],
+                pendingUpgradeCount,
+                currentUpgradeChoices: uniqueChoiceIds
+            };
+        }
+
+        function updateContinueButton() {
+            const continueButton = document.getElementById('btn-continue');
+            if (!continueButton) return;
+            continueButton.classList.toggle('available', Boolean(cachedActiveRun));
+            continueButton.setAttribute('aria-hidden', cachedActiveRun ? 'false' : 'true');
+        }
+
+        function loadPersistentData() {
+            profile = sanitizeProfile(readStorageJson(PROFILE_STORAGE_KEY));
+            state.soundEnabled = profile.settings.soundEnabled;
+            state.cameraMode = profile.settings.cameraMode;
+            state.controlAssist = profile.settings.controlAssist;
+            cachedActiveRun = sanitizeActiveRun(readStorageJson(ACTIVE_RUN_STORAGE_KEY));
+            if (!cachedActiveRun) removeStorageValue(ACTIVE_RUN_STORAGE_KEY);
+            updateContinueButton();
+        }
+
+        function createActiveRunSnapshot() {
+            if (!player || !state.isPlaying || state.gamePhase === 'gameover') return null;
+            return {
+                version: SAVE_VERSION,
+                alive: player.hp > 0,
+                savedAt: Date.now(),
+                score: state.score,
+                xp: state.xp,
+                level: state.level,
+                xpToNext: state.xpToNext,
+                currentBiome: state.currentBiome,
+                upgradeTiers: { ...state.upgradeTiers },
+                player: {
+                    hp: player.hp,
+                    position: {
+                        x: player.mesh.position.x,
+                        z: player.mesh.position.z
+                    },
+                    rotationY: player.mesh.rotation.y
+                },
+                enemies: enemies.filter(enemy => !enemy.isDead).map(enemy => ({
+                    type: enemy.type,
+                    hp: enemy.hp,
+                    position: {
+                        x: enemy.mesh.position.x,
+                        z: enemy.mesh.position.z
+                    },
+                    rotationY: enemy.mesh.rotation.y
+                })),
+                enemiesIntroduced: [...state.enemiesIntroduced],
+                pendingUpgradeCount: state.pendingUpgradeCount,
+                currentUpgradeChoices: [...state.currentUpgradeChoices]
+            };
+        }
+
+        function saveActiveRun() {
+            const snapshot = createActiveRunSnapshot();
+            if (!snapshot) return false;
+            if (!writeStorageJson(ACTIVE_RUN_STORAGE_KEY, snapshot)) return false;
+            cachedActiveRun = sanitizeActiveRun(snapshot);
+            profile.bestScore = Math.max(profile.bestScore, Math.floor(state.score));
+            profile.bestLevel = Math.max(profile.bestLevel, Math.floor(state.level));
+            saveProfile();
+            updateContinueButton();
+            return true;
+        }
+
+        function clearActiveRunSave() {
+            cachedActiveRun = null;
+            removeStorageValue(ACTIVE_RUN_STORAGE_KEY);
+            updateContinueButton();
         }
 
         // ============================================
@@ -514,18 +789,21 @@
             if (state.soundEnabled) ensureAudioContext();
             playUISound();
             syncHUDControls();
+            saveProfile();
         }
 
         function toggleCameraMode() {
             state.cameraMode = state.cameraMode === 'follow' ? 'wide' : 'follow';
             playUISound();
             syncHUDControls();
+            saveProfile();
         }
 
         function toggleControlAssist() {
             state.controlAssist = !state.controlAssist;
             playUISound();
             syncHUDControls();
+            saveProfile();
         }
 
         function openSettings() {
@@ -2059,6 +2337,7 @@
             setPauseUIVisible(true);
             playPauseSound();
             syncHUDControls();
+            saveActiveRun();
         }
 
         function resumeGame() {
@@ -2077,17 +2356,20 @@
         }
 
         function quitToMenu() {
+            saveActiveRun();
             state.isPlaying = false;
             state.gamePhase = 'menu';
             state.settingsOpen = false;
             clearInputState();
             clearCombatScene();
+            setScreenVisibility('upgrade-choice-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('pause-screen', false);
             setScreenVisibility('game-over-screen', false);
             setScreenVisibility('start-screen', true);
             setPauseUIVisible(false);
             syncHUDControls();
+            updateContinueButton();
         }
 
         function getEnemyTypeForLevel(level) {
@@ -2120,6 +2402,7 @@
         }
 
         function startGame() {
+            clearActiveRunSave();
             clearCombatScene();
 
             const now = clock.getElapsedTime();
@@ -2132,8 +2415,12 @@
             state.lastFireTime = now - CONFIG.fireRate;
             state.lastSpawnTime = now;
             state.lastRegenTime = now;
+            state.lastAutoSaveTime = now;
             state.enemiesIntroduced = new Set();
-            state.playerStats = createDefaultPlayerStats();
+            state.upgradeTiers = createDefaultUpgradeTiers();
+            state.playerStats = getStatsFromUpgradeTiers(state.upgradeTiers);
+            state.pendingUpgradeCount = 0;
+            state.currentUpgradeChoices = [];
             state.targetEnemy = null;
             state.cameraShake = 0;
             state.settingsOpen = false;
@@ -2143,12 +2430,202 @@
             loadBiome(0);
             updateHUD();
 
+            setScreenVisibility('upgrade-choice-screen', false);
             setScreenVisibility('start-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('game-over-screen', false);
             setScreenVisibility('pause-screen', false);
             setPauseUIVisible(true);
             syncHUDControls();
+            saveActiveRun();
+        }
+
+        function continueSavedRun() {
+            const savedRun = sanitizeActiveRun(cachedActiveRun);
+            if (!savedRun) {
+                clearActiveRunSave();
+                return false;
+            }
+
+            clearCombatScene();
+            const now = clock.getElapsedTime();
+            state.score = savedRun.score;
+            state.xp = savedRun.xp;
+            state.level = savedRun.level;
+            state.xpToNext = savedRun.xpToNext;
+            state.currentBiome = savedRun.currentBiome;
+            state.upgradeTiers = { ...savedRun.upgradeTiers };
+            state.playerStats = { ...savedRun.playerStats };
+            state.pendingUpgradeCount = savedRun.pendingUpgradeCount;
+            state.currentUpgradeChoices = [...savedRun.currentUpgradeChoices];
+            state.enemiesIntroduced = new Set(savedRun.enemiesIntroduced);
+            state.isPlaying = true;
+            state.gamePhase = 'playing';
+            state.settingsOpen = false;
+            state.targetEnemy = null;
+            state.cameraShake = 0;
+            state.lastFireTime = now - CONFIG.fireRate;
+            state.lastSpawnTime = now;
+            state.lastRegenTime = now;
+            state.lastAutoSaveTime = now;
+            clearInputState();
+
+            player = new Tank(0x22c55e, true);
+            loadBiome(savedRun.currentBiome);
+            player.hp = savedRun.player.hp;
+            player.maxHp = state.playerStats.maxHp;
+            player.mesh.position.set(
+                savedRun.player.position.x,
+                0,
+                savedRun.player.position.z
+            );
+            player.mesh.rotation.y = savedRun.player.rotationY;
+            player.move(0, new THREE.Vector2(0, 0));
+
+            savedRun.enemies.forEach(savedEnemy => {
+                const enemy = new Tank(
+                    ENEMY_TYPES[savedEnemy.type].color,
+                    false,
+                    savedEnemy.type
+                );
+                enemy.hp = savedEnemy.hp;
+                enemy.mesh.position.set(
+                    savedEnemy.position.x,
+                    0,
+                    savedEnemy.position.z
+                );
+                enemy.mesh.rotation.y = savedEnemy.rotationY;
+                enemy.move(0, new THREE.Vector2(0, 0));
+                enemies.push(enemy);
+            });
+
+            setScreenVisibility('start-screen', false);
+            setScreenVisibility('settings-screen', false);
+            setScreenVisibility('game-over-screen', false);
+            setScreenVisibility('pause-screen', false);
+            updateHUD();
+
+            if (state.pendingUpgradeCount > 0) {
+                beginNextUpgradeChoice(state.currentUpgradeChoices);
+            } else {
+                setScreenVisibility('upgrade-choice-screen', false);
+                setPauseUIVisible(true);
+                syncHUDControls();
+                saveActiveRun();
+            }
+            return true;
+        }
+
+        function shuffleUpgrades(upgrades) {
+            const shuffled = [...upgrades];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const randomIndex = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[i]];
+            }
+            return shuffled;
+        }
+
+        function getAvailableUpgrades() {
+            return UPGRADE_DEFINITIONS.filter(upgrade =>
+                state.level >= upgrade.minLevel &&
+                state.upgradeTiers[upgrade.id] < upgrade.maxTier
+            );
+        }
+
+        function renderUpgradeChoices(choiceIds) {
+            const choiceList = document.getElementById('upgrade-choice-list');
+            choiceList.replaceChildren();
+
+            choiceIds.forEach(upgradeId => {
+                const upgrade = UPGRADE_BY_ID.get(upgradeId);
+                if (!upgrade) return;
+                const currentTier = state.upgradeTiers[upgrade.id];
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'upgrade-choice-card';
+                button.dataset.upgradeId = upgrade.id;
+
+                const title = document.createElement('strong');
+                title.textContent = `${upgrade.icon} ${upgrade.name}`;
+                const description = document.createElement('span');
+                description.textContent = upgrade.description;
+                const tier = document.createElement('small');
+                tier.textContent = `Tier ${currentTier + 1} of ${upgrade.maxTier}`;
+                button.append(title, description, tier);
+                button.addEventListener('click', () => applyUpgradeChoice(upgrade.id));
+                choiceList.appendChild(button);
+            });
+
+            choiceList.querySelector('button')?.focus();
+        }
+
+        function finishUpgradeChoices() {
+            state.pendingUpgradeCount = 0;
+            state.currentUpgradeChoices = [];
+            state.gamePhase = 'playing';
+            setScreenVisibility('upgrade-choice-screen', false);
+            setPauseUIVisible(true);
+            syncHUDControls();
+            updateHUD();
+            saveActiveRun();
+        }
+
+        function beginNextUpgradeChoice(preferredChoiceIds = []) {
+            if (!state.isPlaying || state.pendingUpgradeCount <= 0) {
+                finishUpgradeChoices();
+                return;
+            }
+
+            const available = getAvailableUpgrades();
+            if (available.length === 0) {
+                showUpgradeNotification('🌟 All upgrades maxed!');
+                finishUpgradeChoices();
+                return;
+            }
+
+            const availableIds = new Set(available.map(upgrade => upgrade.id));
+            const choices = [...new Set(preferredChoiceIds)]
+                .filter(id => availableIds.has(id))
+                .slice(0, 3);
+            const remaining = shuffleUpgrades(
+                available.filter(upgrade => !choices.includes(upgrade.id))
+            );
+            while (choices.length < 3 && remaining.length > 0) {
+                choices.push(remaining.shift().id);
+            }
+
+            state.currentUpgradeChoices = choices;
+            state.gamePhase = 'choosing-upgrade';
+            clearInputState();
+            setPauseUIVisible(false);
+            syncHUDControls();
+            renderUpgradeChoices(choices);
+            setScreenVisibility('upgrade-choice-screen', true);
+            saveActiveRun();
+        }
+
+        function applyUpgradeChoice(upgradeId) {
+            if (state.gamePhase !== 'choosing-upgrade' ||
+                !state.currentUpgradeChoices.includes(upgradeId)) return;
+
+            const upgrade = UPGRADE_BY_ID.get(upgradeId);
+            if (!upgrade || state.upgradeTiers[upgrade.id] >= upgrade.maxTier) return;
+
+            state.upgradeTiers[upgrade.id]++;
+            state.playerStats[upgrade.stat] += upgrade.amount;
+            if (upgrade.stat === 'maxHp') {
+                player.maxHp = state.playerStats.maxHp;
+                player.hp = Math.min(player.hp + upgrade.amount, player.maxHp);
+            }
+
+            state.pendingUpgradeCount = Math.max(0, state.pendingUpgradeCount - 1);
+            state.currentUpgradeChoices = [];
+            setScreenVisibility('upgrade-choice-screen', false);
+            showUpgradeNotification(`${upgrade.icon} ${upgrade.description}`);
+            updateHUD();
+
+            if (state.pendingUpgradeCount > 0) beginNextUpgradeChoice();
+            else finishUpgradeChoices();
         }
 
         function addXP(amount) {
@@ -2158,18 +2635,7 @@
                 state.xp -= state.xpToNext;
                 state.level++;
                 state.xpToNext = Math.floor(state.xpToNext * 1.4);
-
-                const upgrade = UPGRADES.find(u => u.level === state.level);
-                if (upgrade) {
-                    state.playerStats[upgrade.stat] += upgrade.amount;
-                    if (upgrade.stat === 'maxHp') {
-                        player.maxHp = state.playerStats.maxHp;
-                        player.hp = Math.min(player.hp + upgrade.amount, player.maxHp);
-                    }
-                    showUpgradeNotification(upgrade.text);
-                } else {
-                    showUpgradeNotification('🌟 Level ' + state.level + '!');
-                }
+                state.pendingUpgradeCount++;
 
                 // Change biome every 3 levels
                 if (state.level % 3 === 0) {
@@ -2177,6 +2643,12 @@
                 }
             }
             updateHUD();
+
+            if (state.pendingUpgradeCount > 0 && state.gamePhase === 'playing') {
+                beginNextUpgradeChoice();
+            } else {
+                saveActiveRun();
+            }
         }
 
         function showUpgradeNotification(text) {
@@ -2571,6 +3043,12 @@
                 camera.position.z += (Math.random() - 0.5) * state.cameraShake * shakeScale;
                 state.cameraShake = Math.max(0, state.cameraShake - dt * 2);
             }
+
+            const now = clock.getElapsedTime();
+            if (now - state.lastAutoSaveTime >= 5) {
+                state.lastAutoSaveTime = now;
+                saveActiveRun();
+            }
         }
 
         function updateHUD() {
@@ -2602,9 +3080,14 @@
             state.isPlaying = false;
             state.gamePhase = 'gameover';
             state.settingsOpen = false;
+            state.pendingUpgradeCount = 0;
+            state.currentUpgradeChoices = [];
             clearInputState();
+            updateBestProfile();
+            clearActiveRunSave();
             document.getElementById('final-score').textContent = state.score;
             document.getElementById('final-level').textContent = state.level;
+            setScreenVisibility('upgrade-choice-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('pause-screen', false);
             setScreenVisibility('game-over-screen', true);
@@ -2743,7 +3226,16 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden) return;
                 if (state.gamePhase === 'playing') pauseGame();
-                else clearInputState();
+                else {
+                    clearInputState();
+                    if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused') {
+                        saveActiveRun();
+                    }
+                }
+            });
+            window.addEventListener('pagehide', () => {
+                saveProfile();
+                saveActiveRun();
             });
 
             function updateKeyboardInput() {
@@ -2754,6 +3246,11 @@
 
         // Button handlers
         syncHUDControls();
+
+        document.getElementById('btn-continue').addEventListener('click', (e) => {
+            e.stopPropagation();
+            continueSavedRun();
+        });
 
         document.getElementById('btn-start').addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2824,9 +3321,14 @@
         // keeps working because these handlers only run when called by Capacitor.
         window.TankRealmsApp = Object.freeze({
             handleAppStateChange(isActive) {
-                if (!isActive && state.gamePhase === 'playing') pauseGame();
+                if (isActive) return;
+                if (state.gamePhase === 'playing') pauseGame();
+                else if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused') {
+                    saveActiveRun();
+                }
             },
             handleBackButton() {
+                if (state.gamePhase === 'choosing-upgrade') return true;
                 if (state.settingsOpen) {
                     closeSettings();
                     return true;
@@ -2847,6 +3349,7 @@
             }
         });
 
+        loadPersistentData();
         document.getElementById('start-screen').classList.remove('hidden');
         setPauseUIVisible(false);
         syncHUDControls();

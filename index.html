@@ -70,10 +70,19 @@
     <div id="start-screen" class="screen">
         <h1>⚔️ TANK REALMS</h1>
         <h2>Conquer Every Biome</h2>
+        <button type="button" class="btn btn-continue" id="btn-continue">Continue Run</button>
         <button type="button" class="btn" id="btn-start">Start Adventure</button>
         <div class="game-info">
             Lower left: Move • Lower right: Hold to fire<br>
             Level up to unlock new realms and abilities
+        </div>
+    </div>
+
+    <div id="upgrade-choice-screen" class="screen hidden" role="dialog" aria-modal="true" aria-labelledby="upgrade-choice-title">
+        <div class="upgrade-choice-panel">
+            <h1 id="upgrade-choice-title">Choose Upgrade</h1>
+            <p>Choose one. The battle is paused.</p>
+            <div id="upgrade-choice-list" class="upgrade-choice-list"></div>
         </div>
     </div>
 

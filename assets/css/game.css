@@ -431,6 +431,84 @@
             z-index: 8;
         }
 
+        .btn-continue {
+            display: none;
+            background: linear-gradient(135deg, #22c55e 0%, #15803d 100%);
+            box-shadow: 0 10px 40px rgba(34,197,94,0.3);
+        }
+
+        .btn-continue.available {
+            display: block;
+        }
+
+        #upgrade-choice-screen {
+            z-index: 120;
+        }
+
+        .upgrade-choice-panel {
+            width: min(92vw, 460px);
+            max-height: min(90dvh, 760px);
+            padding: 20px;
+            overflow-y: auto;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 24px;
+            background: rgba(5,10,18,0.88);
+            box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+            backdrop-filter: blur(18px);
+        }
+
+        .upgrade-choice-panel h1 {
+            font-size: 2rem;
+            letter-spacing: 3px;
+        }
+
+        .upgrade-choice-panel > p {
+            margin: 8px 0 16px;
+            color: rgba(255,255,255,0.65);
+            text-align: center;
+        }
+
+        .upgrade-choice-list {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+
+        .upgrade-choice-card {
+            width: 100%;
+            min-height: 82px;
+            padding: 12px 14px;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(102,126,234,0.9) 0%, rgba(118,75,162,0.9) 100%);
+            color: white;
+            text-align: left;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+            pointer-events: auto;
+        }
+
+        .upgrade-choice-card strong {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 15px;
+        }
+
+        .upgrade-choice-card span {
+            display: block;
+            color: rgba(255,255,255,0.78);
+            font-size: 12px;
+            line-height: 1.35;
+        }
+
+        .upgrade-choice-card small {
+            display: block;
+            margin-top: 6px;
+            color: rgba(255,255,255,0.58);
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
         /* Portrait APK layout. The same glass panels, gradients, colors, and
            controls are retained, but arranged so they do not overlap. */
         @media (orientation: portrait) {
@@ -594,6 +672,15 @@
                 width: min(92vw, 420px);
                 max-height: calc(100dvh - max(40px, env(safe-area-inset-top)) - max(40px, env(safe-area-inset-bottom)));
                 overflow-y: auto;
+            }
+
+            .upgrade-choice-panel {
+                padding: 16px;
+            }
+
+            .upgrade-choice-panel h1 {
+                font-size: clamp(1.45rem, 7vw, 2rem);
+                letter-spacing: 2px;
             }
 
             #pause-screen h1 {
