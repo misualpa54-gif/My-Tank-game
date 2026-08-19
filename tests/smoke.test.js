@@ -6,7 +6,7 @@ const { JSDOM } = require('jsdom');
 const ThreeBase = require('three');
 
 const root = path.resolve(__dirname, '..');
-const htmlPath = path.join(root, 'tank_realms_debugged_hud.html');
+const htmlPath = path.join(root, 'index.html');
 const gamePath = path.join(root, 'assets/js/game.js');
 
 function createTouchEvent(window, type, touches) {
@@ -199,6 +199,21 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(harness.intervals.length, 0);
   });
 
+  await t.test('responds safely to native app background and Back events', () => {
+    api.startGame();
+    window.TankRealmsApp.handleAppStateChange(false);
+    assert.equal(api.state().gamePhase, 'paused');
+
+    assert.equal(window.TankRealmsApp.handleBackButton(), true);
+    assert.equal(api.state().gamePhase, 'playing');
+
+    assert.equal(window.TankRealmsApp.handleBackButton(), true);
+    assert.equal(api.state().gamePhase, 'paused');
+
+    api.quitToMenu();
+    assert.equal(window.TankRealmsApp.handleBackButton(), false);
+  });
+
   await t.test('can restart repeatedly and return cleanly to the menu', () => {
     for (let i = 0; i < 10; i += 1) api.startGame();
     assert.equal(api.state().gamePhase, 'playing');
@@ -213,14 +228,16 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
   harness.dom.window.close();
 });
 
-test('document references the extracted assets and has no broken core block', () => {
+test('document uses local build entry points and has no broken core block', () => {
   const html = fs.readFileSync(htmlPath, 'utf8');
   const gameSource = fs.readFileSync(gamePath, 'utf8');
 
   assert.match(html, /assets\/css\/game\.css/);
-  assert.match(html, /assets\/js\/game\.js/);
+  assert.match(html, /src\/main\.js/);
+  assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(html, /NEW CORE LOOP SYSTEM/);
   assert.doesNotMatch(gameSource, /oldUpdateLoop|oldEnemiesPush|oldLevelUp/);
   assert.equal(fs.existsSync(path.join(root, 'assets/css/game.css')), true);
+  assert.equal(fs.existsSync(path.join(root, 'src/main.js')), true);
   assert.equal(fs.existsSync(gamePath), true);
 });

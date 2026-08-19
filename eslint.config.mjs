@@ -20,10 +20,38 @@ export default [
     }
   },
   {
+    files: ['src/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: globals.browser
+    },
+    rules: {
+      'no-redeclare': 'error',
+      'no-undef': 'error',
+      'no-unreachable': 'error',
+      'no-unused-vars': ['warn', { args: 'after-used', caughtErrors: 'none' }]
+    }
+  },
+  {
     files: ['tests/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',
+      globals: globals.node
+    },
+    rules: {
+      'no-redeclare': 'error',
+      'no-undef': 'error',
+      'no-unreachable': 'error',
+      'no-unused-vars': ['warn', { args: 'after-used', caughtErrors: 'none' }]
+    }
+  },
+  {
+    files: ['scripts/**/*.mjs', '*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
       globals: globals.node
     },
     rules: {

@@ -2381,6 +2381,33 @@
             quitToMenu();
         });
 
+        // Small bridge used by the native Android wrapper. The browser version
+        // keeps working because these handlers only run when called by Capacitor.
+        window.TankRealmsApp = Object.freeze({
+            handleAppStateChange(isActive) {
+                if (!isActive && state.gamePhase === 'playing') pauseGame();
+            },
+            handleBackButton() {
+                if (state.settingsOpen) {
+                    closeSettings();
+                    return true;
+                }
+                if (state.gamePhase === 'playing') {
+                    pauseGame();
+                    return true;
+                }
+                if (state.gamePhase === 'paused') {
+                    resumeGame();
+                    return true;
+                }
+                if (state.gamePhase === 'gameover') {
+                    quitToMenu();
+                    return true;
+                }
+                return false;
+            }
+        });
+
         document.getElementById('start-screen').classList.remove('hidden');
         setPauseUIVisible(false);
         syncHUDControls();

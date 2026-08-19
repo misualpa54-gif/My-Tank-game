@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Tank Realms - Epic Battle</title>
+    <link rel="stylesheet" href="assets/css/game.css">
+</head>
+<body>
+    <div id="game-container"></div>
+    <div id="input-layer"></div>
+    <div id="damage-overlay"></div>
+    <div id="heal-overlay"></div>
+
+    <div id="hud-layer">
+        <div id="hud-top">
+            <div class="hud-panel">
+                <div>🏆 <span id="score">0</span></div>
+                <div class="stats-panel">
+                    <span>⚡ <span id="stat-speed">100</span>%</span>
+                    <span>💥 <span id="stat-damage">100</span>%</span>
+                </div>
+            </div>
+            <div class="hud-panel hud-center">
+                <div class="level-badge">Level <span id="level">1</span></div>
+                <div class="xp-bar-container">
+                    <div class="xp-bar-fill" id="xp-bar"></div>
+                </div>
+            </div>
+            <div class="hud-panel">
+                <div>❤️ Health</div>
+                <div class="health-bar-container">
+                    <div class="health-bar-fill" id="hp-bar"></div>
+                </div>
+                <div class="stats-panel">
+                    <span>🛡️ <span id="stat-armor">0</span></span>
+                    <span>🔄 <span id="stat-regen">0</span>/s</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <button type="button" id="btn-pause" class="pause-btn" aria-label="Pause game">⏸</button>
+
+    <div class="hud-quickbar" id="hud-quickbar">
+        <button type="button" class="hud-icon-btn" id="btn-settings" aria-label="Settings">⚙</button>
+        <button type="button" class="hud-icon-btn" id="btn-sound" aria-label="Sound">🔇</button>
+        <button type="button" class="hud-icon-btn" id="btn-camera" aria-label="Camera">📷</button>
+        <button type="button" class="hud-icon-btn" id="btn-assist" aria-label="Assist">◌</button>
+    </div>
+
+
+    <div class="biome-indicator" id="biome-name">Forest Realm</div>
+
+    <div id="joystick-base">
+        <div id="joystick-knob"></div>
+    </div>
+
+    <div id="upgrade-notification">
+        <h2>🌟 LEVEL UP!</h2>
+        <p id="upgrade-text">Speed increased!</p>
+    </div>
+
+    <div id="enemy-intro">
+        <strong id="enemy-name">Scout Tank</strong>
+        <p id="enemy-desc">Fast but fragile</p>
+    </div>
+
+    <div id="start-screen" class="screen">
+        <h1>⚔️ TANK REALMS</h1>
+        <h2>Conquer Every Biome</h2>
+        <button type="button" class="btn" id="btn-start">Start Adventure</button>
+        <div class="game-info">
+            Left side: Move • Right side: Auto-fire<br>
+            Level up to unlock new realms and abilities
+        </div>
+    </div>
+
+    <div id="game-over-screen" class="screen hidden">
+        <h1>💀 Defeated</h1>
+        <h2>Score: <span id="final-score">0</span> • Level: <span id="final-level">1</span></h2>
+        <button type="button" class="btn btn-restart" id="btn-restart">Try Again</button>
+    </div>
+
+
+
+    <div id="settings-screen" class="screen hidden">
+        <div class="settings-panel">
+            <div class="settings-title">Game Settings</div>
+            <div class="settings-subtitle">Mobile HUD controls</div>
+            <div class="settings-grid">
+                <button type="button" class="hud-icon-btn wide" id="toggle-sound-panel">Sound: Off</button>
+                <button type="button" class="hud-icon-btn wide" id="toggle-camera-panel">Camera: Follow</button>
+                <button type="button" class="hud-icon-btn wide" id="toggle-assist-panel">Assist: Off</button>
+                <button type="button" class="hud-icon-btn wide" id="close-settings-panel">Close</button>
+            </div>
+            <div class="settings-row">
+                <div class="settings-label">Camera</div>
+                <div class="settings-note">Follow = close combat. Wide = more view.</div>
+                <div class="settings-label">Control assist</div>
+                <div class="settings-note">Assist keeps auto-aim sticky and input easy.</div>
+                <div class="settings-label">Sound</div>
+                <div class="settings-note">UI and pause beeps. Full combat sound is planned for the APK.</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="pause-screen" class="screen hidden">
+        <h1>⏸ Paused</h1>
+        <h2>Game hold</h2>
+        <button type="button" class="btn" id="btn-resume">Resume</button>
+        <button type="button" class="btn btn-restart" id="btn-quit">Quit to Menu</button>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
