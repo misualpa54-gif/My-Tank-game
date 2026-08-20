@@ -178,12 +178,12 @@ The rest of the 5×5 world streams after first paint rather than blocking menu i
 
 The Java 21 workflow, full 74-test check, Android unit-test task, debug assembly, and upload succeeded.
 
-- Workflow: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32416478482`
-- APK artifact: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32416478482/artifacts/9424111083`
+- Workflow: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32418575548`
+- APK artifact: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32418575548/artifacts/9424853564`
 - Artifact name: `TankRealms-debug-apk`
 - ZIP contains: `app-debug.apk`
-- Archive size: 3,789,821 bytes (approximately 3.79 MB)
-- GitHub archive SHA-256: `3c13316ff8f24714d9665b0235734eb75bdc9f00a2cd205f11093f66734fb134`
+- Archive size: 3,789,804 bytes (approximately 3.79 MB)
+- GitHub archive SHA-256: `ef22bc6d221ff204257e4ff215dbb6eacb099d92da3dd873b84a5b532ffb73f6`
 - Expires: 19 September 2026
 
 ## Deferred work
