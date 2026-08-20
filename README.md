@@ -17,7 +17,21 @@ Phases 1–14 provide the stable offline APK plus optimization, saving, economy,
 - Adventure and Daily behavior remains unchanged;
 - no internet, account, ads, real-money purchases, or network permission is added.
 
-Phase 16 is a stabilization package for the latest build:
+Phase 17 begins the approved definitive combined roadmap with an infinite-world foundation:
+
+- no arena walls or ±44 movement box;
+- deterministic analytic terrain at any world coordinate;
+- quality-scaled pooled ground tiles and 48-unit streamed scenery chunks;
+- 5×5 gameplay neighborhood, with a farther decorative High-quality ring;
+- deterministic groves, rocks, grass, crystals, spikes, water and lava;
+- player collision/sliding against major cover and enemy cover avoidance;
+- player-centered enemy/Guardian spawning and distant enemy regrouping;
+- local objective anchors for marked targets and beacon defense;
+- world seed/coordinates/objective anchors/recent destruction scaffold saved through Continue;
+- Ricochet migrated from walls to hard rocks/crystal pillars;
+- 72 automated tests with zero failures.
+
+Phase 16 is the preceding stabilization package:
 
 - visible offline loading, retry, and safe unfinished-run reset instead of a silent blank/frozen startup;
 - Android WebView cache protection so an updated APK cannot load stale hashed assets;
@@ -44,9 +58,13 @@ Detailed reports are in:
 - `docs/phase14-offline-daily-challenge-report.md`
 - `docs/phase15-additional-game-modes-report.md`
 - `docs/phase16-stability-loading-report.md`
+- `docs/phase17-infinite-world-foundation-report.md`
+- `docs/v25-alternative-comparison-audit.md`
+- `docs/definitive-combined-roadmap.md`
+- `docs/godot-native-port-spec.md`
 - `docs/current-game-comprehensive-handoff.md`
 
-The approved gameplay roadmap is complete and the first post-roadmap stabilization package is applied. Physical Android QA is next. Final-release signing, app icon/splash replacement, and store work remain separate.
+The original gameplay roadmap and stabilization are complete. The staged definitive combined roadmap is now in progress, beginning with the infinite-world foundation. Final native Godot conversion, monetization, signing, final art, and store work remain later separate phases.
 
 ## Project structure
 

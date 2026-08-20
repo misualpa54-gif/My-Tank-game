@@ -133,7 +133,19 @@ function createHarness(storageSeed = {}) {
       scene: () => scene,
       bullets: () => bullets,
       bulletPool: () => bulletPool,
-      environmentColliders: () => environmentColliders,
+      environmentColliders: () => [...worldColliderGrid.values()].flat(),
+      worldChunks: () => worldChunks,
+      worldGroundTiles: () => worldGroundTiles,
+      worldChunkQueue: () => worldChunkQueue,
+      getNearbyEnvironmentColliders,
+      isWorldPositionBlocked,
+      resolvePlayerWorldMovement,
+      repositionDistantEnemies,
+      updateInfiniteWorld,
+      requestWorldChunks,
+      runWorldChunkTasks,
+      createRunWorldSeed,
+      worldConfig: () => WORLD_CONFIG,
       environmentObjects: () => environmentObjects,
       environmentParticles: () => environmentParticles,
       environmentParticleBatches: () => environmentParticleBatches,
@@ -299,7 +311,10 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
       stats.instancedMeshes >= 7,
       'forest should instance trees, background rocks, grass, and environment particles'
     );
-    assert.equal(api.environmentColliders().length, 80);
+    assert.ok(api.environmentColliders().length > 0);
+    assert.ok(api.environmentColliders().length < 300);
+    assert.equal(api.worldChunks().size, 25);
+    assert.equal(api.worldGroundTiles().length, 25);
   });
 
   await t.test('applies persistent Low, Medium, and High quality budgets', () => {
@@ -712,8 +727,8 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(unsafeRun.playerStats.regen, 12);
     assert.equal(unsafeRun.playerStats.multishot, 1);
     assert.equal(unsafeRun.player.hp, 330);
-    assert.equal(unsafeRun.player.position.x, 44);
-    assert.equal(unsafeRun.player.position.z, -44);
+    assert.equal(unsafeRun.player.position.x, 999);
+    assert.equal(unsafeRun.player.position.z, -999);
     assert.equal(unsafeRun.enemies.length, 0);
   });
 
@@ -829,7 +844,8 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
       api.loadBiome(i % 6);
       const stats = getSceneStats(api.scene());
       assert.ok(stats.meshes < 350, `biome ${i % 6} created ${stats.meshes} meshes`);
-      assert.ok(api.environmentColliders().length <= 100);
+      assert.ok(api.environmentColliders().length < 400);
+      assert.equal(api.worldChunks().size, 25);
     }
   });
 
@@ -845,6 +861,106 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
   });
 
   harness.dom.window.close();
+});
+
+test('infinite world chunks are deterministic and stream around distant coordinates', () => {
+  const harness = createHarness();
+  const { api, window } = harness;
+  api.startGame();
+  api.state().worldSeed = 0x1234abcd;
+  api.loadBiome(0);
+  const firstCover = api.environmentColliders()
+    .map(collider => `${collider.id}:${collider.position.x.toFixed(2)}:${collider.position.z.toFixed(2)}`)
+    .sort();
+  api.loadBiome(0);
+  const secondCover = api.environmentColliders()
+    .map(collider => `${collider.id}:${collider.position.x.toFixed(2)}:${collider.position.z.toFixed(2)}`)
+    .sort();
+  assert.deepEqual(secondCover, firstCover);
+  const cover = api.environmentColliders()[0];
+  const current = cover.position.clone().add(new window.THREE.Vector3(
+    cover.radius + api.worldConfig().playerColliderRadius + 1,
+    0,
+    0
+  ));
+  const resolved = api.resolvePlayerWorldMovement(current, cover.position.clone());
+  assert.equal(api.isWorldPositionBlocked(resolved), false);
+  assert.notDeepEqual(resolved.toArray(), cover.position.toArray());
+
+  api.player().mesh.position.set(150, 0, -110);
+  api.player().move(0, new window.THREE.Vector2(0, 0));
+  for (let index = 0; index < 40; index++) api.updateInfiniteWorld();
+  assert.ok(Math.abs(api.player().mesh.position.x) > 44);
+  assert.ok(api.worldChunks().has('3,-3'));
+  assert.ok(api.worldChunks().size <= 49);
+  assert.equal(api.worldGroundTiles().length, 25);
+  assert.ok(api.getNearbyEnvironmentColliders(api.player().mesh.position).length < 180);
+  harness.dom.window.close();
+});
+
+test('quality scaling adds a decorative streamed ring only on High', () => {
+  const harness = createHarness();
+  harness.api.startGame();
+  assert.equal(harness.api.worldGroundTiles().length, 25);
+  harness.api.toggleQualityMode();
+  assert.equal(harness.api.state().qualityMode, 'high');
+  assert.equal(harness.api.worldGroundTiles().length, 49);
+  for (let index = 0; index < 30; index++) harness.api.updateInfiniteWorld();
+  assert.ok(harness.api.worldChunks().size >= 25);
+  assert.ok(
+    [...harness.api.worldChunks().values()].some(chunk => chunk.decorativeOnly)
+  );
+  harness.dom.window.close();
+});
+
+test('infinite spawning, local objectives, and distant enemy regrouping follow the player', () => {
+  const harness = createHarness();
+  const { api, window } = harness;
+  api.startGame();
+  api.player().mesh.position.set(480, 0, -320);
+  api.player().move(0, new window.THREE.Vector2(0, 0));
+  api.state().level = 2;
+  api.state().lastObjectiveRealm = -1;
+  assert.equal(api.startRealmObjectiveIfNeeded(), true);
+  assert.equal(api.state().activeObjective.anchorX, 480);
+  assert.equal(api.state().activeObjective.anchorZ, -320);
+  const marked = api.enemies().find(enemy => enemy.isObjectiveTarget);
+  assert.ok(marked);
+  assert.ok(marked.mesh.position.distanceTo(api.player().mesh.position) < 40);
+
+  const distant = api.makeEnemy('soldier', -500, 500);
+  distant.hp = 31;
+  assert.equal(api.repositionDistantEnemies(), 1);
+  const regroupDistance = distant.mesh.position.distanceTo(api.player().mesh.position);
+  assert.ok(regroupDistance >= api.worldConfig().enemySpawnMinDistance);
+  assert.ok(regroupDistance <= api.worldConfig().enemySpawnMaxDistance + 0.001);
+  assert.equal(distant.hp, 31);
+  assert.ok(Number.isFinite(api.player().mesh.position.y));
+  assert.ok(window.document.getElementById('upgrade-notification').classList.contains('show'));
+  harness.dom.window.close();
+});
+
+test('infinite world seed and coordinates survive a complete page reload', () => {
+  const first = createHarness();
+  first.api.startGame();
+  const seed = first.api.state().worldSeed;
+  first.api.player().mesh.position.set(123.5, 0, -87.25);
+  first.api.player().move(0, new first.window.THREE.Vector2(0, 0));
+  first.api.saveActiveRun();
+  const savedProfile = first.window.localStorage.getItem('tank_realms_profile_v1');
+  const savedRun = first.window.localStorage.getItem('tank_realms_active_run_v1');
+  first.dom.window.close();
+
+  const second = createHarness({
+    tank_realms_profile_v1: savedProfile,
+    tank_realms_active_run_v1: savedRun
+  });
+  assert.equal(second.api.continueSavedRun(), true);
+  assert.equal(second.api.state().worldSeed, seed);
+  assert.equal(second.api.player().mesh.position.x, 123.5);
+  assert.equal(second.api.player().mesh.position.z, -87.25);
+  assert.ok(second.api.worldChunks().has('2,-2'));
+  second.dom.window.close();
 });
 
 test('active run survives a complete page reload', () => {

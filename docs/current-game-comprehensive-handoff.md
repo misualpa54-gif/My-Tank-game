@@ -1,12 +1,12 @@
 # Tank Realms — Comprehensive Current-State Review and AI Handoff
 
 **Documentation date:** 20 August 2026<br>
-**Current gameplay milestone:** Phase 15 gameplay complete; Phase 16 loading/runtime stabilization applied<br>
+**Current gameplay milestone:** Phase 17 infinite-world foundation implemented after Phase 16 stabilization<br>
 **Repository:** `misualpa54-gif/My-Tank-game`<br>
 **Working/review branch:** `arena/01a01b73-my-tank-game`<br>
 **Phase 15 gameplay baseline:** `eeed271f4bb25ad0bd5434b66d07517145426dc9`<br>
 **Current source:** latest commit on the working/review branch<br>
-**Current automated result:** 68 tests passing, 0 failures, 0 npm vulnerabilities<br>
+**Current automated result:** 72 tests passing, 0 failures, 0 npm vulnerabilities<br>
 **Current Android status:** successful offline portrait debug APK build
 
 This document is intentionally detailed. It is meant to let another AI model, developer, designer, or reviewer understand the game without first reconstructing fifteen phases of conversation.
@@ -42,7 +42,7 @@ A useful status label is:
 
 Tank Realms is a portrait-oriented, offline, arcade sci-fi tank survival game with roguelite and permanent-progression systems.
 
-The player controls one procedural 3D tank inside a bounded arena. Movement is controlled with the lower thumb area, while firing is hold-based and auto-aimed. Enemies continuously enter the arena. Destroying enemies grants:
+The player controls one procedural 3D tank across a deterministic, unbounded streamed world. Movement is controlled with the lower thumb area, while firing is hold-based and auto-aimed. Enemies continuously enter a ring around the moving player. Destroying enemies grants:
 
 - score;
 - XP;
@@ -631,9 +631,11 @@ Permanent Garage upgrades are applied to these values at run start unless the mo
 
 ### World and camera
 
-- Arena visual terrain is approximately 100×100 world units.
-- Player movement is clamped to ±44 on X/Z.
-- Projectile wall collision occurs around ±46.
+- The world uses deterministic analytic terrain and 48-unit streamed chunks.
+- Low/Medium maintain 25 pooled ground tiles; High adds a 49-tile decorative view ring.
+- There are no arena walls or gameplay boundary; only a ±1,000,000 safety clamp protects impossible/corrupt coordinates.
+- Enemies and Guardians spawn around the current player rather than world origin.
+- Major streamed cover blocks/slides player movement and steers enemies.
 - Follow camera offset: approximately `(0, 22, 28)` from player.
 - Wide camera offset: approximately `(0, 28, 36)`.
 - Camera smoothly follows and looks slightly forward of the player.
@@ -703,10 +705,9 @@ Projectiles use swept segment collision, not endpoint-only collision. The comple
 
 - enemy tanks;
 - player tank;
-- foreground tree/rock cylinders;
-- arena walls.
+- nearby streamed tree/rock/crystal cylinders.
 
-This prevents a six-unit projectile step during a 0.1-second frame stall from tunneling through a target.
+There are no arena walls. Ricochet plasma reflects from hard rocks/crystal pillars. This prevents a six-unit projectile step during a 0.1-second frame stall from tunneling through a target or streamed cover.
 
 Player special projectiles support:
 
@@ -1056,13 +1057,14 @@ This is the initial menu background and normal starting Adventure biome.
 
 ### Environmental behavior
 
-- Terrain is generated on an 80-segment grid.
-- Tanks sample terrain height and normals continuously.
-- Water vertices animate as waves.
-- Lava opacity pulses.
-- Ambient particles move continuously and use instanced meshes.
+- Terrain is analytic at every coordinate and rendered through pooled 48-unit ground tiles.
+- The run seed, chunk coordinates, and realm deterministically regenerate cover/scenery.
+- Gameplay chunks stream in a 5×5 neighborhood; High adds a decorative outer ring.
+- Tanks sample terrain height and normals continuously at any world position.
+- Water vertices animate as waves and lava opacity pulses.
+- Ambient particles follow/wrap around the moving player and use instanced meshes.
 - Lights and optional effect lights follow the selected quality preset.
-- Trees, grass, background rocks, and ambient particles are instanced for performance.
+- Trees, grass, rocks, crystals, and ambient particles use chunk-local instancing.
 
 ---
 
@@ -1663,7 +1665,7 @@ The upgrade-choice dialog cannot be dismissed with Back because choosing is mand
 
 ## 27. Testing and known verification level
 
-Current automated suite: **68 passing tests**.
+Current automated suite: **72 passing tests**.
 
 Coverage includes:
 

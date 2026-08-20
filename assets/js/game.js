@@ -324,6 +324,23 @@
             touchControlTopRatio: 0.3
         };
 
+        // Native-port-friendly infinite-world constants. The web prototype keeps
+        // these values centralized so the later Godot data resources can mirror
+        // the same chunk size, terrain formula, save bounds, and streaming rules.
+        const WORLD_CONFIG = Object.freeze({
+            chunkSize: 48,
+            activeRadius: 2,
+            retainedRadius: 3,
+            groundSegments: 24,
+            maxCoordinate: 1000000,
+            enemyRepositionDistance: 100,
+            enemySpawnMinDistance: 42,
+            enemySpawnMaxDistance: 64,
+            playerColliderRadius: 1.7,
+            chunkBuildBudgetMs: 2.5,
+            maxDestroyedCoverIds: 600
+        });
+
         const QUALITY_PRESETS = {
             low: {
                 label: 'Low',
@@ -526,6 +543,9 @@
             return hitTime;
         }
 
+        // Retained as a pure regression helper for old-save/tests; live infinite
+        // gameplay intentionally has no arena-wall collision.
+        // eslint-disable-next-line no-unused-vars
         function getArenaBoundaryHitTime(start, end, boundary = 46) {
             if (Math.abs(end.x) <= boundary && Math.abs(end.z) <= boundary) return null;
 
@@ -680,6 +700,8 @@
             level: 1,
             xpToNext: 100,
             currentBiome: 0,
+            worldSeed: 0x5f3759df,
+            destroyedCoverIds: [],
             realmProgress: 0,
             guardianPending: false,
             activeObjective: null,
@@ -767,10 +789,14 @@
         let groundMesh, waterMesh, lavaMeshes = [];
         let environmentParticles = [];
         let environmentParticleBatches = [];
-        let environmentColliders = [];
-        let treeInstanceParts = [];
-        let backgroundRockInstances = [];
-        let terrainData = { heights: [], size: 100, segments: 80 };
+        let worldGroundTiles = [];
+        let worldChunks = new Map();
+        let worldChunkQueue = [];
+        let worldChunkQueuedKeys = new Set();
+        let worldColliderGrid = new Map();
+        let worldAnchorChunk = { x: Number.NaN, z: Number.NaN };
+        let waterMeshes = [];
+        let worldLavaMeshes = [];
         let resetInputController = () => {};
 
         const bulletPool = [];
@@ -839,15 +865,20 @@
             environmentObjects = [];
             environmentParticles = [];
             environmentParticleBatches = [];
-            environmentColliders = [];
-            treeInstanceParts = [];
-            backgroundRockInstances = [];
             groundMesh = null;
             waterMesh = null;
             lavaMeshes = [];
             ambientLight = null;
             dirLight = null;
             hemisphereLight = null;
+            worldGroundTiles = [];
+            worldChunks = new Map();
+            worldChunkQueue = [];
+            worldChunkQueuedKeys = new Set();
+            worldColliderGrid = new Map();
+            worldAnchorChunk = { x: Number.NaN, z: Number.NaN };
+            waterMeshes = [];
+            worldLavaMeshes = [];
         }
 
         function getQualityPreset() {
@@ -869,15 +900,17 @@
 
         function applySceneQualityVisibility() {
             const preset = getQualityPreset();
-            environmentObjects.forEach(object => {
-                if (object.userData.qualityCategory === 'background-decoration') {
-                    object.count = Math.max(
-                        1,
-                        Math.round(
-                            object.userData.fullInstanceCount * preset.backgroundDecorationRatio
-                        )
-                    );
-                }
+            environmentObjects.forEach(root => {
+                root.traverse(object => {
+                    if (object.userData.qualityCategory === 'background-decoration') {
+                        object.count = Math.max(
+                            1,
+                            Math.round(
+                                object.userData.fullInstanceCount * preset.backgroundDecorationRatio
+                            )
+                        );
+                    }
+                });
             });
             environmentParticleBatches.forEach(batch => {
                 batch.count = Math.max(
@@ -931,6 +964,27 @@
             const currentIndex = QUALITY_ORDER.indexOf(state.qualityMode);
             state.qualityMode = QUALITY_ORDER[(currentIndex + 1) % QUALITY_ORDER.length];
             applyQualitySettings();
+            if (player && state.isPlaying) {
+                const biome = BIOMES[state.currentBiome] || BIOMES[0];
+                worldChunkQueue = [];
+                worldChunkQueuedKeys = new Set();
+                if (state.qualityMode !== 'high') {
+                    [...worldChunks.values()]
+                        .filter(chunk => chunk.decorativeOnly)
+                        .forEach(chunk => disposeWorldChunk(chunk.key));
+                }
+                createInfiniteGround(
+                    biome,
+                    player.mesh.position.x,
+                    player.mesh.position.z
+                );
+                requestWorldChunks(
+                    player.mesh.position.x,
+                    player.mesh.position.z,
+                    biome,
+                    false
+                );
+            }
             syncHUDControls();
             saveProfile();
         }
@@ -1519,8 +1573,18 @@
 
         function sanitizePosition(savedPosition) {
             return {
-                x: clampSavedNumber(savedPosition?.x, -44, 44, 0),
-                z: clampSavedNumber(savedPosition?.z, -44, 44, 0)
+                x: clampSavedNumber(
+                    savedPosition?.x,
+                    -WORLD_CONFIG.maxCoordinate,
+                    WORLD_CONFIG.maxCoordinate,
+                    0
+                ),
+                z: clampSavedNumber(
+                    savedPosition?.z,
+                    -WORLD_CONFIG.maxCoordinate,
+                    WORLD_CONFIG.maxCoordinate,
+                    0
+                )
             };
         }
 
@@ -1555,7 +1619,19 @@
                 progress: clampSavedNumber(savedObjective.progress, 0, definition.target, 0),
                 elapsed: clampSavedNumber(savedObjective.elapsed, 0, definition.target, 0),
                 startScore: clampSavedNumber(savedObjective.startScore, 0, 1e12, 0, true),
-                beaconHp: clampSavedNumber(savedObjective.beaconHp, 0, 100, 100)
+                beaconHp: clampSavedNumber(savedObjective.beaconHp, 0, 100, 100),
+                anchorX: clampSavedNumber(
+                    savedObjective.anchorX,
+                    -WORLD_CONFIG.maxCoordinate,
+                    WORLD_CONFIG.maxCoordinate,
+                    0
+                ),
+                anchorZ: clampSavedNumber(
+                    savedObjective.anchorZ,
+                    -WORLD_CONFIG.maxCoordinate,
+                    WORLD_CONFIG.maxCoordinate,
+                    0
+                )
             };
         }
 
@@ -1575,6 +1651,18 @@
                 ? getDailyDefinition(savedRun.dailyDateKey)
                 : null;
             const safeRunStats = sanitizeRunStats(savedRun.runStats);
+            const worldSeed = clampSavedNumber(
+                savedRun.worldSeed,
+                0,
+                0xffffffff,
+                hashString(`legacy-world-${savedRun.savedAt || 0}`),
+                true
+            ) >>> 0;
+            const destroyedCoverIds = [...new Set(
+                Array.isArray(savedRun.destroyedCoverIds)
+                    ? savedRun.destroyedCoverIds.filter(id => typeof id === 'string')
+                    : []
+            )].slice(-WORLD_CONFIG.maxDestroyedCoverIds);
             const upgradeTiers = sanitizeUpgradeTiers(savedRun.upgradeTiers);
             const runTankId = TANK_DESIGNS[savedRun.runTankId]
                 ? savedRun.runTankId
@@ -1660,6 +1748,8 @@
                 level,
                 xpToNext,
                 currentBiome: clampSavedNumber(savedRun.currentBiome, 0, BIOMES.length - 1, 0, true),
+                worldSeed,
+                destroyedCoverIds,
                 gameMode,
                 modeState: sanitizeModeState(gameMode, savedRun.modeState, safeRunStats.elapsedSeconds),
                 isDailyChallenge,
@@ -1757,6 +1847,10 @@
                 level: state.level,
                 xpToNext: state.xpToNext,
                 currentBiome: state.currentBiome,
+                worldSeed: state.worldSeed,
+                destroyedCoverIds: state.destroyedCoverIds.slice(
+                    -WORLD_CONFIG.maxDestroyedCoverIds
+                ),
                 gameMode: state.gameMode,
                 modeState: { ...state.modeState },
                 isDailyChallenge: state.isDailyChallenge,
@@ -1900,42 +1994,35 @@
         // TERRAIN HEIGHT SAMPLING - Fixes sinking tanks
         // ============================================
         function getTerrainHeight(x, z) {
-            // Handle coordinates outside the terrain bounds gracefully
-            const halfSize = terrainData.size / 2;
-            if (x < -halfSize || x > halfSize || z < -halfSize || z > halfSize) {
-                // Return a slight dip for distant terrain
-                return -2;
+            const biome = BIOMES[state.currentBiome] || BIOMES[0];
+            const seed = state.worldSeed >>> 0;
+            const phaseX = ((seed & 0xffff) / 65535 - 0.5) * 240;
+            const phaseZ = (((seed >>> 16) & 0xffff) / 65535 - 0.5) * 240;
+            const amplitude = biome.terrainAmplitude || 2;
+            const frequency = biome.terrainFrequency || 0.08;
+            const sx = x + phaseX;
+            const sz = z + phaseZ;
+            let height = Math.sin(sx * frequency) * Math.cos(sz * frequency) * amplitude;
+            height += Math.sin(sx * frequency * 2 + 1) *
+                Math.cos(sz * frequency * 1.5) * amplitude * 0.5;
+            height += Math.sin(sx * frequency * 0.5) *
+                Math.cos(sz * frequency * 0.8 + 2) * amplitude * 0.8;
+            if (biome.hasDunes) {
+                height += Math.abs(Math.sin(sx * 0.06 + sz * 0.04)) * 4;
+                height += Math.abs(Math.sin(sx * 0.03 - sz * 0.05)) * 3;
             }
-
-            if (!terrainData.heights.length) return 0;
-
-            const size = terrainData.size;
-            const segments = terrainData.segments;
-
-            // Convert world coordinates to grid coordinates
-            const gridX = ((x + halfSize) / size) * segments;
-            const gridZ = ((z + halfSize) / size) * segments;
-
-            // Clamp to valid range
-            const x0 = Math.max(0, Math.min(segments - 1, Math.floor(gridX)));
-            const z0 = Math.max(0, Math.min(segments - 1, Math.floor(gridZ)));
-            const x1 = Math.min(segments, x0 + 1);
-            const z1 = Math.min(segments, z0 + 1);
-
-            // Get fractional parts for interpolation
-            const fx = gridX - x0;
-            const fz = gridZ - z0;
-
-            // Bilinear interpolation
-            const h00 = terrainData.heights[z0 * (segments + 1) + x0] || 0;
-            const h10 = terrainData.heights[z0 * (segments + 1) + x1] || 0;
-            const h01 = terrainData.heights[z1 * (segments + 1) + x0] || 0;
-            const h11 = terrainData.heights[z1 * (segments + 1) + x1] || 0;
-
-            const h0 = h00 * (1 - fx) + h10 * fx;
-            const h1 = h01 * (1 - fx) + h11 * fx;
-
-            return h0 * (1 - fz) + h1 * fz;
+            if (biome.hasSpikes) {
+                const spikeFactor = Math.max(
+                    0,
+                    Math.sin(sx * 0.3) * Math.sin(sz * 0.3)
+                );
+                height += spikeFactor * spikeFactor * 6;
+            }
+            // Every new run begins on a readable plateau, but the formula remains
+            // analytic and continuous at every other world coordinate.
+            const originDistance = Math.hypot(x, z);
+            const flatten = Math.max(0, 1 - originDistance / 26);
+            return height * (1 - flatten * 0.8);
         }
 
         function getTerrainNormal(x, z) {
@@ -2372,7 +2459,557 @@
         }
 
         // ============================================
-        // BIOME LOADING - Creates entire environment
+        // INFINITE WORLD STREAMING FOUNDATION
+        // ============================================
+        function getWorldChunkKey(chunkX, chunkZ) {
+            return `${chunkX},${chunkZ}`;
+        }
+
+        function getWorldChunkCoordinate(value) {
+            return Math.floor(value / WORLD_CONFIG.chunkSize);
+        }
+
+        function getWorldChunkSeed(chunkX, chunkZ, biomeIndex = state.currentBiome) {
+            let seed = state.worldSeed >>> 0;
+            seed ^= Math.imul(chunkX, 73856093);
+            seed ^= Math.imul(chunkZ, 19349663);
+            seed ^= Math.imul(biomeIndex + 1, 83492791);
+            return seed >>> 0;
+        }
+
+        function createChunkRandom(chunkX, chunkZ, biomeIndex = state.currentBiome) {
+            let seed = getWorldChunkSeed(chunkX, chunkZ, biomeIndex);
+            return () => {
+                seed = (seed + 0x6D2B79F5) >>> 0;
+                let value = Math.imul(seed ^ seed >>> 15, seed | 1);
+                value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+                return ((value ^ value >>> 14) >>> 0) / 4294967296;
+            };
+        }
+
+        function createRunWorldSeed(modeId, dailySeed = 0) {
+            if (modeId === 'daily' && dailySeed) return dailySeed >>> 0;
+            const time = Date.now() >>> 0;
+            const randomPart = Math.floor(Math.random() * 0xffffffff) >>> 0;
+            return (time ^ randomPart ^ hashString(`tank-realms-${modeId}`)) >>> 0;
+        }
+
+        function getWorldGroundSegments() {
+            if (state.qualityMode === 'low') return 16;
+            if (state.qualityMode === 'high') return WORLD_CONFIG.groundSegments;
+            return 20;
+        }
+
+        function getWorldVisualRadius() {
+            return state.qualityMode === 'high'
+                ? WORLD_CONFIG.activeRadius + 1
+                : WORLD_CONFIG.activeRadius;
+        }
+
+        function bakeWorldGroundTile(tile, chunkX, chunkZ, biome) {
+            const size = WORLD_CONFIG.chunkSize;
+            const centerX = chunkX * size + size / 2;
+            const centerZ = chunkZ * size + size / 2;
+            const positions = tile.mesh.geometry.attributes.position;
+            const colors = [];
+            const baseColor = new THREE.Color(biome.groundColor);
+            const grassColor = new THREE.Color(biome.grassColor);
+            const dryColor = new THREE.Color(
+                biome.name.includes('Frozen') ? 0x9fb4c4 :
+                    biome.name.includes('Volcanic') ? 0x3b2720 : 0x7a5c33
+            );
+            for (let index = 0; index < positions.count; index++) {
+                const localX = positions.getX(index);
+                const localPlaneY = positions.getY(index);
+                const worldX = centerX + localX;
+                const worldZ = centerZ - localPlaneY;
+                const height = getTerrainHeight(worldX, worldZ);
+                positions.setZ(index, height);
+                const elevationBlend = Math.min(1, Math.max(0, (height + 1) / 4));
+                const patch = Math.sin(worldX * 0.045 + 1.3) *
+                    Math.cos(worldZ * 0.05 - 0.7);
+                const color = baseColor.clone().lerp(grassColor, elevationBlend * 0.35);
+                color.lerp(dryColor, Math.max(0, patch - 0.55) * 0.22);
+                colors.push(color.r, color.g, color.b);
+            }
+            tile.mesh.geometry.setAttribute(
+                'color',
+                new THREE.Float32BufferAttribute(colors, 3)
+            );
+            positions.needsUpdate = true;
+            tile.mesh.geometry.computeVertexNormals();
+            tile.mesh.position.set(centerX, 0, centerZ);
+            tile.chunkX = chunkX;
+            tile.chunkZ = chunkZ;
+        }
+
+        function createInfiniteGround(biome, centerX = 0, centerZ = 0) {
+            removeAndDisposeObject(groundMesh);
+            groundMesh = new THREE.Group();
+            groundMesh.userData.worldGround = true;
+            worldGroundTiles = [];
+            const segments = getWorldGroundSegments();
+            const visualRadius = getWorldVisualRadius();
+            const tileCount = (visualRadius * 2 + 1) ** 2;
+            for (let index = 0; index < tileCount; index++) {
+                const geometry = new THREE.PlaneGeometry(
+                    WORLD_CONFIG.chunkSize,
+                    WORLD_CONFIG.chunkSize,
+                    segments,
+                    segments
+                );
+                const material = new THREE.MeshStandardMaterial({
+                    vertexColors: true,
+                    roughness: 0.9,
+                    metalness: 0.1
+                });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.rotation.x = -Math.PI / 2;
+                mesh.receiveShadow = true;
+                mesh.frustumCulled = false;
+                groundMesh.add(mesh);
+                worldGroundTiles.push({ mesh, chunkX: Number.NaN, chunkZ: Number.NaN });
+            }
+            scene.add(groundMesh);
+            worldAnchorChunk = { x: Number.NaN, z: Number.NaN };
+            repositionInfiniteGround(biome, centerX, centerZ, true);
+        }
+
+        function repositionInfiniteGround(biome, playerX, playerZ, force = false) {
+            const anchorX = getWorldChunkCoordinate(playerX);
+            const anchorZ = getWorldChunkCoordinate(playerZ);
+            if (!force && anchorX === worldAnchorChunk.x && anchorZ === worldAnchorChunk.z) {
+                return false;
+            }
+            const desired = [];
+            const desiredKeys = new Set();
+            const visualRadius = getWorldVisualRadius();
+            for (let dx = -visualRadius; dx <= visualRadius; dx++) {
+                for (let dz = -visualRadius; dz <= visualRadius; dz++) {
+                    const chunkX = anchorX + dx;
+                    const chunkZ = anchorZ + dz;
+                    desired.push({ chunkX, chunkZ, distance: dx * dx + dz * dz });
+                    desiredKeys.add(getWorldChunkKey(chunkX, chunkZ));
+                }
+            }
+            desired.sort((a, b) => a.distance - b.distance);
+            const tileByKey = new Map(
+                worldGroundTiles
+                    .filter(tile => Number.isFinite(tile.chunkX))
+                    .map(tile => [getWorldChunkKey(tile.chunkX, tile.chunkZ), tile])
+            );
+            const reusable = worldGroundTiles.filter(tile =>
+                !desiredKeys.has(getWorldChunkKey(tile.chunkX, tile.chunkZ))
+            );
+            desired.forEach(location => {
+                const key = getWorldChunkKey(location.chunkX, location.chunkZ);
+                if (tileByKey.has(key)) return;
+                const tile = reusable.shift();
+                if (tile) bakeWorldGroundTile(tile, location.chunkX, location.chunkZ, biome);
+            });
+            worldAnchorChunk = { x: anchorX, z: anchorZ };
+            return true;
+        }
+
+        function createWorldInstancedMesh(geometry, material, matrices, category = '') {
+            if (matrices.length === 0) {
+                geometry.dispose();
+                material.dispose();
+                return null;
+            }
+            const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
+            matrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
+            mesh.instanceMatrix.needsUpdate = true;
+            mesh.castShadow = category !== 'grass';
+            mesh.receiveShadow = category !== 'grass';
+            mesh.frustumCulled = false;
+            mesh.userData.fullInstanceCount = matrices.length;
+            if (category === 'grass') mesh.userData.qualityCategory = 'background-decoration';
+            return mesh;
+        }
+
+        function addWorldCoverCollider(chunk, collider) {
+            if (state.destroyedCoverIds.includes(collider.id)) return false;
+            if (!chunk.decorativeOnly) chunk.colliders.push(collider);
+            return true;
+        }
+
+        function createWorldChunk(chunkX, chunkZ, biome, decorativeOnly = false) {
+            const key = getWorldChunkKey(chunkX, chunkZ);
+            if (worldChunks.has(key)) return worldChunks.get(key);
+            const random = createChunkRandom(chunkX, chunkZ);
+            const size = WORLD_CONFIG.chunkSize;
+            const originX = chunkX * size;
+            const originZ = chunkZ * size;
+            const root = new THREE.Group();
+            root.userData.worldChunkKey = key;
+            root.userData.decorativeOnly = decorativeOnly;
+            const chunk = { key, chunkX, chunkZ, root, colliders: [], decorativeOnly };
+            const transform = new THREE.Object3D();
+            const trunkMatrices = [];
+            const foliageMatrices = [];
+            const cactusMatrices = [];
+            const rockMatrices = [];
+            const grassMatrices = [];
+            const crystalMatrices = [];
+            const spikeMatrices = [];
+
+            const pushMatrix = (collection, x, y, z, scaleX, scaleY, scaleZ, rotationY = 0) => {
+                transform.position.set(x - originX, y, z - originZ);
+                transform.rotation.set(0, rotationY, 0);
+                transform.scale.set(scaleX, scaleY, scaleZ);
+                transform.updateMatrix();
+                collection.push(transform.matrix.clone());
+            };
+
+            const supportsGroves = biome.treeCount > 0;
+            const groveChance = decorativeOnly ? 0.34 : 0.56;
+            const groveCount = supportsGroves && random() < groveChance
+                ? 1 + Math.floor(random() * (decorativeOnly ? 1 : 2))
+                : 0;
+            let treeIndex = 0;
+            for (let grove = 0; grove < groveCount; grove++) {
+                const groveX = originX + 8 + random() * (size - 16);
+                const groveZ = originZ + 8 + random() * (size - 16);
+                const treeCount = 2 + Math.floor(random() * 4);
+                for (let index = 0; index < treeCount; index++) {
+                    const angle = random() * Math.PI * 2;
+                    const distance = random() * random() * 11;
+                    const worldX = groveX + Math.cos(angle) * distance;
+                    const worldZ = groveZ + Math.sin(angle) * distance;
+                    if (Math.hypot(worldX, worldZ) < 22) continue;
+                    const height = getTerrainHeight(worldX, worldZ);
+                    const scale = 0.8 + random() * 0.4;
+                    const id = `${state.currentBiome}:${key}:tree:${treeIndex++}`;
+                    if (!addWorldCoverCollider(chunk, {
+                        id,
+                        position: new THREE.Vector3(worldX, height, worldZ),
+                        radius: biome.name.includes('Desert') ? 1.1 : 1.45 * scale,
+                        type: 'tree',
+                        hard: false,
+                        chunkKey: key
+                    })) continue;
+                    if (biome.name.includes('Desert')) {
+                        pushMatrix(cactusMatrices, worldX, height + 2 * scale, worldZ, scale, 4 * scale, scale, random() * Math.PI * 2);
+                    } else {
+                        const trunkHeight = (biome.name.includes('Volcanic') ? 3 : 3.5 + random() * 1.5) * scale;
+                        pushMatrix(trunkMatrices, worldX, height + trunkHeight / 2, worldZ, scale, trunkHeight, scale, random() * Math.PI * 2);
+                        if (!biome.name.includes('Volcanic')) {
+                            const foliageLayers = biome.name.includes('Frozen') ? 2 : 3;
+                            for (let layer = 0; layer < foliageLayers; layer++) {
+                                const foliageScale = Math.max(0.8, 2.5 * scale - layer * 0.55);
+                                pushMatrix(
+                                    foliageMatrices,
+                                    worldX,
+                                    height + trunkHeight + layer * 1.1,
+                                    worldZ,
+                                    foliageScale,
+                                    foliageScale * 1.3,
+                                    foliageScale,
+                                    random() * Math.PI * 2
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            const areaRatio = size * size / 10000;
+            const rockCount = Math.max(
+                1,
+                Math.round(
+                    (biome.rockCount || 10) * areaRatio *
+                    (decorativeOnly ? 0.3 : 0.7)
+                )
+            );
+            for (let index = 0; index < rockCount; index++) {
+                const worldX = originX + 4 + random() * (size - 8);
+                const worldZ = originZ + 4 + random() * (size - 8);
+                if (Math.hypot(worldX, worldZ) < 20) continue;
+                const height = getTerrainHeight(worldX, worldZ);
+                const scale = 0.65 + random() * 1.2;
+                const id = `${state.currentBiome}:${key}:rock:${index}`;
+                if (!addWorldCoverCollider(chunk, {
+                    id,
+                    position: new THREE.Vector3(worldX, height, worldZ),
+                    radius: 1.2 * scale,
+                    type: 'rock',
+                    hard: true,
+                    chunkKey: key
+                })) continue;
+                pushMatrix(rockMatrices, worldX, height + 0.7 * scale, worldZ, scale, scale, scale, random() * Math.PI * 2);
+            }
+
+            if (biome.hasCrystals) {
+                const crystalCount = 2 + Math.floor(random() * 3);
+                for (let index = 0; index < crystalCount; index++) {
+                    const worldX = originX + 5 + random() * (size - 10);
+                    const worldZ = originZ + 5 + random() * (size - 10);
+                    const height = getTerrainHeight(worldX, worldZ);
+                    const scale = 0.8 + random() * 1.3;
+                    const id = `${state.currentBiome}:${key}:crystal:${index}`;
+                    if (!addWorldCoverCollider(chunk, {
+                        id,
+                        position: new THREE.Vector3(worldX, height, worldZ),
+                        radius: 0.85 * scale,
+                        type: 'crystal',
+                        hard: true,
+                        chunkKey: key
+                    })) continue;
+                    pushMatrix(crystalMatrices, worldX, height + 1.5 * scale, worldZ, scale, 3 * scale, scale, random() * Math.PI * 2);
+                }
+            }
+
+            if (biome.hasSpikes) {
+                const spikeCount = 2 + Math.floor(random() * 3);
+                for (let index = 0; index < spikeCount; index++) {
+                    const worldX = originX + 5 + random() * (size - 10);
+                    const worldZ = originZ + 5 + random() * (size - 10);
+                    const height = getTerrainHeight(worldX, worldZ);
+                    const scale = 0.8 + random() * 1.2;
+                    pushMatrix(spikeMatrices, worldX, height + 1.5 * scale, worldZ, scale, 3 * scale, scale, random() * Math.PI * 2);
+                }
+            }
+
+            const grassCount = Math.max(
+                0,
+                Math.round(
+                    (biome.grassCount || 0) * areaRatio *
+                    (decorativeOnly ? 0.35 : 1)
+                )
+            );
+            for (let index = 0; index < grassCount; index++) {
+                const worldX = originX + random() * size;
+                const worldZ = originZ + random() * size;
+                const height = getTerrainHeight(worldX, worldZ);
+                const scale = 0.65 + random() * 0.7;
+                pushMatrix(grassMatrices, worldX, height + 0.35, worldZ, scale, scale, scale, random() * Math.PI * 2);
+            }
+
+            const trunk = createWorldInstancedMesh(
+                new THREE.CylinderGeometry(0.3, 0.48, 1, 7),
+                new THREE.MeshStandardMaterial({ color: biome.name.includes('Frozen') ? 0x3a2a1a : 0x4a3728, roughness: 0.9 }),
+                trunkMatrices,
+                'cover'
+            );
+            const foliageColor = biome.name.includes('Frozen') ? 0xdde9ef :
+                biome.name.includes('Swamp') ? 0x4a6a3a : 0x2d5a27;
+            const foliage = createWorldInstancedMesh(
+                new THREE.ConeGeometry(1, 1, 7),
+                new THREE.MeshStandardMaterial({ color: foliageColor, roughness: 0.8 }),
+                foliageMatrices,
+                'cover'
+            );
+            const cactus = createWorldInstancedMesh(
+                new THREE.CylinderGeometry(0.4, 0.5, 1, 7),
+                new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.75 }),
+                cactusMatrices,
+                'cover'
+            );
+            const rocks = createWorldInstancedMesh(
+                new THREE.DodecahedronGeometry(1),
+                new THREE.MeshStandardMaterial({ color: biome.name.includes('Frozen') ? 0x8a9aaa : 0x555555, roughness: 0.88 }),
+                rockMatrices,
+                'cover'
+            );
+            const grass = createWorldInstancedMesh(
+                new THREE.ConeGeometry(0.1, 0.8, 4),
+                new THREE.MeshStandardMaterial({ color: biome.grassColor, roughness: 0.9, side: THREE.DoubleSide }),
+                grassMatrices,
+                'grass'
+            );
+            const crystals = createWorldInstancedMesh(
+                new THREE.ConeGeometry(0.35, 1, 6),
+                new THREE.MeshStandardMaterial({
+                    color: biome.crystalColor || 0x00ffff,
+                    emissive: biome.crystalColor || 0x00ffff,
+                    emissiveIntensity: 0.35,
+                    roughness: 0.2
+                }),
+                crystalMatrices,
+                'cover'
+            );
+            const spikes = createWorldInstancedMesh(
+                new THREE.ConeGeometry(0.55, 1, 5),
+                new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 }),
+                spikeMatrices,
+                'decoration'
+            );
+            [trunk, foliage, cactus, rocks, grass, crystals, spikes]
+                .filter(Boolean)
+                .forEach(mesh => root.add(mesh));
+
+            if (biome.hasWater && random() < 0.28) {
+                const radius = 3.5 + random() * 3.5;
+                const water = new THREE.Mesh(
+                    new THREE.CircleGeometry(radius, 20),
+                    new THREE.MeshBasicMaterial({
+                        color: biome.waterColor || 0x4a90b8,
+                        transparent: true,
+                        opacity: 0.58,
+                        side: THREE.DoubleSide
+                    })
+                );
+                const worldX = originX + 8 + random() * (size - 16);
+                const worldZ = originZ + 8 + random() * (size - 16);
+                water.rotation.x = -Math.PI / 2;
+                water.position.set(worldX - originX, getTerrainHeight(worldX, worldZ) + 0.12, worldZ - originZ);
+                root.add(water);
+                waterMeshes.push(water);
+            }
+            if (biome.hasLava && random() < 0.34) {
+                const radius = 3 + random() * 3;
+                const lava = new THREE.Mesh(
+                    new THREE.CircleGeometry(radius, 18),
+                    new THREE.MeshBasicMaterial({
+                        color: biome.lavaColor || 0xff4500,
+                        transparent: true,
+                        opacity: 0.88,
+                        side: THREE.DoubleSide
+                    })
+                );
+                const worldX = originX + 8 + random() * (size - 16);
+                const worldZ = originZ + 8 + random() * (size - 16);
+                lava.rotation.x = -Math.PI / 2;
+                lava.position.set(worldX - originX, getTerrainHeight(worldX, worldZ) + 0.13, worldZ - originZ);
+                lava.userData.phase = random() * Math.PI * 2;
+                root.add(lava);
+                worldLavaMeshes.push(lava);
+            }
+
+            root.position.set(originX, 0, originZ);
+            scene.add(root);
+            environmentObjects.push(root);
+            worldChunks.set(key, chunk);
+            worldColliderGrid.set(key, chunk.colliders);
+            applySceneQualityVisibility();
+            return chunk;
+        }
+
+        function disposeWorldChunk(key) {
+            const chunk = worldChunks.get(key);
+            if (!chunk) return;
+            removeAndDisposeObject(chunk.root);
+            environmentObjects = environmentObjects.filter(root => root !== chunk.root);
+            waterMeshes = waterMeshes.filter(mesh => !chunk.root.children.includes(mesh));
+            worldLavaMeshes = worldLavaMeshes.filter(mesh => !chunk.root.children.includes(mesh));
+            worldChunks.delete(key);
+            worldColliderGrid.delete(key);
+        }
+
+        function requestWorldChunks(playerX, playerZ, biome, immediate = false) {
+            const anchorX = getWorldChunkCoordinate(playerX);
+            const anchorZ = getWorldChunkCoordinate(playerZ);
+            const wanted = [];
+            const visualRadius = getWorldVisualRadius();
+            for (let dx = -visualRadius; dx <= visualRadius; dx++) {
+                for (let dz = -visualRadius; dz <= visualRadius; dz++) {
+                    const chunkX = anchorX + dx;
+                    const chunkZ = anchorZ + dz;
+                    const key = getWorldChunkKey(chunkX, chunkZ);
+                    const decorativeOnly = Math.max(Math.abs(dx), Math.abs(dz)) >
+                        WORLD_CONFIG.activeRadius;
+                    const existing = worldChunks.get(key);
+                    if (existing?.decorativeOnly && !decorativeOnly) disposeWorldChunk(key);
+                    if (!worldChunks.has(key) && !worldChunkQueuedKeys.has(key)) {
+                        wanted.push({
+                            key,
+                            chunkX,
+                            chunkZ,
+                            decorativeOnly,
+                            distance: dx * dx + dz * dz
+                        });
+                    }
+                }
+            }
+            wanted.sort((a, b) => a.distance - b.distance);
+            if (immediate) {
+                wanted.forEach(item => createWorldChunk(
+                    item.chunkX,
+                    item.chunkZ,
+                    biome,
+                    item.decorativeOnly
+                ));
+            } else {
+                wanted.forEach(item => {
+                    worldChunkQueue.push(item);
+                    worldChunkQueuedKeys.add(item.key);
+                });
+            }
+            [...worldChunks.values()].forEach(chunk => {
+                const distance = Math.max(
+                    Math.abs(chunk.chunkX - anchorX),
+                    Math.abs(chunk.chunkZ - anchorZ)
+                );
+                if (distance > WORLD_CONFIG.retainedRadius) disposeWorldChunk(chunk.key);
+            });
+        }
+
+        function runWorldChunkTasks(biome, budgetMs = WORLD_CONFIG.chunkBuildBudgetMs) {
+            const startedAt = performance.now();
+            let built = 0;
+            while (worldChunkQueue.length > 0 && built < 1 &&
+                performance.now() - startedAt < budgetMs) {
+                const task = worldChunkQueue.shift();
+                worldChunkQueuedKeys.delete(task.key);
+                createWorldChunk(
+                    task.chunkX,
+                    task.chunkZ,
+                    biome,
+                    task.decorativeOnly
+                );
+                built++;
+            }
+            return built;
+        }
+
+        function getNearbyEnvironmentColliders(start, end = start) {
+            const minChunkX = getWorldChunkCoordinate(Math.min(start.x, end.x)) - 1;
+            const maxChunkX = getWorldChunkCoordinate(Math.max(start.x, end.x)) + 1;
+            const minChunkZ = getWorldChunkCoordinate(Math.min(start.z, end.z)) - 1;
+            const maxChunkZ = getWorldChunkCoordinate(Math.max(start.z, end.z)) + 1;
+            const nearby = [];
+            for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+                for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                    const colliders = worldColliderGrid.get(getWorldChunkKey(chunkX, chunkZ));
+                    if (colliders) nearby.push(...colliders);
+                }
+            }
+            return nearby;
+        }
+
+        function updateInfiniteWorld() {
+            if (!player) return;
+            const biome = BIOMES[state.currentBiome] || BIOMES[0];
+            repositionInfiniteGround(biome, player.mesh.position.x, player.mesh.position.z);
+            requestWorldChunks(player.mesh.position.x, player.mesh.position.z, biome, false);
+            runWorldChunkTasks(biome);
+        }
+
+        function findOpenWorldPositionAround(
+            center,
+            minDistance,
+            maxDistance,
+            colliderRadius = 2.2
+        ) {
+            let fallback = center.clone();
+            for (let attempt = 0; attempt < 14; attempt++) {
+                const angle = Math.random() * Math.PI * 2;
+                const distance = minDistance + Math.random() * (maxDistance - minDistance);
+                const candidate = new THREE.Vector3(
+                    center.x + Math.cos(angle) * distance,
+                    0,
+                    center.z + Math.sin(angle) * distance
+                );
+                candidate.y = getTerrainHeight(candidate.x, candidate.z);
+                fallback = candidate;
+                if (!isWorldPositionBlocked(candidate, colliderRadius)) return candidate;
+            }
+            return fallback;
+        }
+
+        // ============================================
+        // BIOME LOADING - Creates entire streamed environment
         // ============================================
         function loadBiome(biomeIndex) {
             const biome = BIOMES[biomeIndex % BIOMES.length];
@@ -2435,591 +3072,19 @@
             dirLight.shadow.camera.bottom = -80;
             scene.add(dirLight);
 
-            // Ground with terrain data
-            createProceduralGround(biome);
+            const centerX = player ? player.mesh.position.x : 0;
+            const centerZ = player ? player.mesh.position.z : 0;
+            createInfiniteGround(biome, centerX, centerZ);
+            requestWorldChunks(centerX, centerZ, biome, true);
 
-            // Walls
-            createWalls(biome);
-
-            // Environment elements
-            createTrees(biome);
-            createRocks(biome);
-            createGrass(biome);
-
-            // Special features
-            if (biome.hasWater) createWater(biome);
-            if (biome.hasLava) createLava(biome);
-            if (biome.hasCrystals) createCrystals();
-            if (biome.hasDunes) createDunes(biome);
-            if (biome.hasSpikes) createSpikes();
-
-            // Edge Decorations (Background)
-            createBackgroundDecorations(biome);
-            finalizeEnvironmentInstances();
-
-            // Particles
+            // Ambient particles remain one or two instanced batches and wrap around
+            // the moving player; they are not tied to world origin anymore.
             createEnvironmentParticles(biome);
             applySceneQualityVisibility();
         }
 
-        function createBackgroundDecorations(biome) {
-            // Add very dense vegetation/rocks outside the walls for visuals
-            const outerCount = biome.treeCount * 5 + 80; // Increased density
-
-            for (let i = 0; i < outerCount; i++) {
-                // Spawn in a ring from 50 to 120
-                const angle = Math.random() * Math.PI * 2;
-                const radius = 50 + Math.random() * 70;
-                const x = Math.cos(angle) * radius;
-                const z = Math.sin(angle) * radius;
-
-                // 70% chance for tree (if biome supports), 30% for rock
-                if (Math.random() > 0.3 && (biome.name.includes('Forest') || biome.name.includes('Swamp') || biome.name.includes('Frozen') || biome.name.includes('Desert'))) {
-                   createSingleTree(biome, x, z, true);
-                } else {
-                   createSingleRock(biome, x, z, true);
-                }
-            }
-        }
-
-        // ============================================
-        // PROCEDURAL GROUND WITH HEIGHT DATA
-        // ============================================
-        function createProceduralGround(biome) {
-            if (groundMesh) removeAndDisposeObject(groundMesh);
-
-            const size = terrainData.size;
-            const segments = terrainData.segments;
-            const geo = new THREE.PlaneGeometry(size, size, segments, segments);
-
-            // Store height data for terrain following
-            terrainData.heights = [];
-
-            const positions = geo.attributes.position;
-            const amplitude = biome.terrainAmplitude || 2;
-            const frequency = biome.terrainFrequency || 0.08;
-
-            for (let i = 0; i < positions.count; i++) {
-                const x = positions.getX(i);
-                const z = positions.getY(i);
-                const distFromCenter = Math.sqrt(x*x + z*z);
-
-                let height = 0;
-
-                if (distFromCenter < 45) {
-                    // Multiple octaves of noise for realistic terrain
-                    height += Math.sin(x * frequency) * Math.cos(z * frequency) * amplitude;
-                    height += Math.sin(x * frequency * 2 + 1) * Math.cos(z * frequency * 1.5) * amplitude * 0.5;
-                    height += Math.sin(x * frequency * 0.5) * Math.cos(z * frequency * 0.8 + 2) * amplitude * 0.8;
-
-                    // Biome-specific terrain features
-                    if (biome.hasDunes) {
-                        height += Math.abs(Math.sin(x * 0.06 + z * 0.04)) * 4;
-                        height += Math.abs(Math.sin(x * 0.03 - z * 0.05)) * 3;
-                    }
-
-                    if (biome.hasSpikes) {
-                        const spikeFactor = Math.max(0, Math.sin(x * 0.3) * Math.sin(z * 0.3));
-                        height += spikeFactor * spikeFactor * 6;
-                    }
-
-                    // Flatten center area for gameplay
-                    const centerFlatten = Math.max(0, 1 - distFromCenter / 15);
-                    height *= (1 - centerFlatten * 0.8);
-                }
-
-                positions.setZ(i, height);
-                terrainData.heights.push(height);
-            }
-            geo.computeVertexNormals();
-
-            // Create vertex colors for natural variation
-            const colors = [];
-            const baseColor = new THREE.Color(biome.groundColor);
-            const grassColor = new THREE.Color(biome.grassColor);
-
-            for (let i = 0; i < positions.count; i++) {
-                const height = positions.getZ(i);
-                const blend = Math.min(1, Math.max(0, (height + 1) / 4));
-                const color = baseColor.clone().lerp(grassColor, blend * 0.4 + Math.random() * 0.15);
-                colors.push(color.r, color.g, color.b);
-            }
-            geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-            const mat = new THREE.MeshStandardMaterial({
-                vertexColors: true,
-                roughness: 0.9,
-                metalness: 0.1
-            });
-
-            groundMesh = new THREE.Mesh(geo, mat);
-            groundMesh.rotation.x = -Math.PI / 2;
-            groundMesh.receiveShadow = true;
-            scene.add(groundMesh);
-        }
-
-        // ============================================
-        // ENVIRONMENT OBJECTS
-        // ============================================
-        function createWalls(biome) {
-            const wallMat = new THREE.MeshStandardMaterial({
-                color: new THREE.Color(biome.groundColor).multiplyScalar(0.5),
-                roughness: 0.9,
-                metalness: 0.1
-            });
-
-            const positions = [
-                { pos: [48, 4, 0], size: [4, 8, 100] },
-                { pos: [-48, 4, 0], size: [4, 8, 100] },
-                { pos: [0, 4, 48], size: [100, 8, 4] },
-                { pos: [0, 4, -48], size: [100, 8, 4] }
-            ];
-
-            positions.forEach(p => {
-                const geo = new THREE.BoxGeometry(...p.size);
-                const wall = new THREE.Mesh(geo, wallMat);
-                wall.position.set(...p.pos);
-                wall.castShadow = true;
-                wall.receiveShadow = true;
-                scene.add(wall);
-                environmentObjects.push(wall);
-            });
-        }
-
-        function createTrees(biome) {
-            for (let i = 0; i < biome.treeCount; i++) {
-                let x, z;
-                do {
-                    x = (Math.random() - 0.5) * 85;
-                    z = (Math.random() - 0.5) * 85;
-                } while (Math.abs(x) < 20 && Math.abs(z) < 20);
-
-                createSingleTree(biome, x, z);
-            }
-        }
-
-        function getInstanceBatch(batches, key, geometryFactory, materialFactory, castShadow) {
-            let batch = batches.find(item => item.key === key);
-            if (!batch) {
-                batch = { key, geometryFactory, materialFactory, castShadow, matrices: [] };
-                batches.push(batch);
-            }
-            return batch;
-        }
-
-        function queueInstancePart(batch, groupMatrix, position, rotation, scale) {
-            const part = new THREE.Object3D();
-            part.position.copy(position);
-            part.rotation.set(rotation.x, rotation.y, rotation.z);
-            part.scale.copy(scale);
-            part.updateMatrix();
-            batch.matrices.push(groupMatrix.clone().multiply(part.matrix));
-        }
-
-        function createSingleTree(biome, x, z, isBackground = false) {
-            const segments = isBackground ? 5 : 8;
-            const castShadow = !isBackground;
-            const batchSuffix = `${isBackground ? 'background' : 'foreground'}-${segments}`;
-            const parts = [];
-
-            if (biome.name.includes('Forest') || biome.name.includes('Swamp')) {
-                const trunkHeight = 4 + Math.random() * 3;
-                const foliageColor = biome.name.includes('Swamp') ? 0x4a6a3a : 0x2d5a27;
-                parts.push({
-                    key: `forest-trunk-${batchSuffix}`,
-                    geometryFactory: () => new THREE.CylinderGeometry(0.3, 0.5, 1, segments),
-                    materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.9 }),
-                    position: new THREE.Vector3(0, trunkHeight / 2, 0),
-                    rotation: new THREE.Euler(),
-                    scale: new THREE.Vector3(1, trunkHeight, 1)
-                });
-
-                for (let j = 0; j < (isBackground ? 2 : 3); j++) {
-                    const size = 3.5 - j * 0.8;
-                    parts.push({
-                        key: `forest-foliage-${foliageColor}-${batchSuffix}`,
-                        geometryFactory: () => new THREE.ConeGeometry(1, 1, segments),
-                        materialFactory: () => new THREE.MeshStandardMaterial({ color: foliageColor, roughness: 0.8 }),
-                        position: new THREE.Vector3(0, trunkHeight + j * 1.5, 0),
-                        rotation: new THREE.Euler(),
-                        scale: new THREE.Vector3(size, size * 1.5, size)
-                    });
-                }
-            } else if (biome.name.includes('Frozen')) {
-                parts.push({
-                    key: `frozen-trunk-${batchSuffix}`,
-                    geometryFactory: () => new THREE.CylinderGeometry(0.2, 0.4, 1, segments),
-                    materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9 }),
-                    position: new THREE.Vector3(0, 2.5, 0),
-                    rotation: new THREE.Euler(),
-                    scale: new THREE.Vector3(1, 5, 1)
-                });
-
-                for (let j = 0; j < (isBackground ? 2 : 4); j++) {
-                    const size = 2.5 - j * 0.5;
-                    parts.push({
-                        key: `frozen-foliage-${batchSuffix}`,
-                        geometryFactory: () => new THREE.ConeGeometry(1, 1, segments),
-                        materialFactory: () => new THREE.MeshStandardMaterial({ color: 0xe8f4f8, roughness: 0.8 }),
-                        position: new THREE.Vector3(0, 4 + j * 1.2, 0),
-                        rotation: new THREE.Euler(),
-                        scale: new THREE.Vector3(size, 2, size)
-                    });
-                }
-            } else if (biome.name.includes('Desert')) {
-                parts.push({
-                    key: `cactus-main-${batchSuffix}`,
-                    geometryFactory: () => new THREE.CylinderGeometry(0.4, 0.5, 1, segments),
-                    materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.7 }),
-                    position: new THREE.Vector3(0, 2, 0),
-                    rotation: new THREE.Euler(),
-                    scale: new THREE.Vector3(1, 4, 1)
-                });
-
-                if (Math.random() > 0.3) {
-                    parts.push({
-                        key: `cactus-arm-${batchSuffix}`,
-                        geometryFactory: () => new THREE.CylinderGeometry(0.2, 0.25, 1, 6),
-                        materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.7 }),
-                        position: new THREE.Vector3(0.6, 2.5, 0),
-                        rotation: new THREE.Euler(0, 0, -Math.PI / 4),
-                        scale: new THREE.Vector3(1, 2, 1)
-                    });
-                }
-            } else if (biome.name.includes('Volcanic')) {
-                parts.push({
-                    key: `volcanic-trunk-${batchSuffix}`,
-                    geometryFactory: () => new THREE.CylinderGeometry(0.15, 0.3, 1, 5),
-                    materialFactory: () => new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1 }),
-                    position: new THREE.Vector3(0, 1.5, 0),
-                    rotation: new THREE.Euler(0, 0, Math.random() * 0.3 - 0.15),
-                    scale: new THREE.Vector3(1, 3, 1)
-                });
-            }
-
-            const terrainY = getTerrainHeight(x, z);
-            const rotationY = Math.random() * Math.PI * 2;
-            const treeScale = 0.7 + Math.random() * 0.6;
-            const groupMatrix = new THREE.Matrix4().compose(
-                new THREE.Vector3(x, terrainY, z),
-                new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotationY),
-                new THREE.Vector3(treeScale, treeScale, treeScale)
-            );
-
-            parts.forEach(part => {
-                const batch = getInstanceBatch(
-                    treeInstanceParts,
-                    part.key,
-                    part.geometryFactory,
-                    part.materialFactory,
-                    castShadow
-                );
-                queueInstancePart(batch, groupMatrix, part.position, part.rotation, part.scale);
-            });
-
-            if (!isBackground) {
-                environmentColliders.push({
-                    type: 'tree',
-                    radius: 1.5 * treeScale,
-                    position: new THREE.Vector3(x, terrainY, z)
-                });
-            }
-        }
-
-        function createRocks(biome) {
-            for (let i = 0; i < biome.rockCount; i++) {
-                let x, z;
-                do {
-                    x = (Math.random() - 0.5) * 85;
-                    z = (Math.random() - 0.5) * 85;
-                } while (Math.abs(x) < 18 && Math.abs(z) < 18);
-
-                createSingleRock(biome, x, z);
-            }
-        }
-
-        function getRockColor(biome) {
-            if (biome.name.includes('Volcanic')) return 0x2a2a2a;
-            if (biome.name.includes('Frozen')) return 0x8090a0;
-            if (biome.name.includes('Desert')) return 0xb8956a;
-            return 0x6a6a6a;
-        }
-
-        function createSingleRock(biome, x, z, isBackground = false) {
-            const size = 0.5 + Math.random() * 2;
-            const rockColor = getRockColor(biome);
-            const terrainY = getTerrainHeight(x, z);
-            const rotation = new THREE.Euler(
-                Math.random() * 0.4,
-                Math.random() * Math.PI * 2,
-                Math.random() * 0.4
-            );
-
-            if (isBackground) {
-                const batch = getInstanceBatch(
-                    backgroundRockInstances,
-                    `background-rock-${rockColor}`,
-                    () => new THREE.DodecahedronGeometry(1, 0),
-                    () => new THREE.MeshStandardMaterial({
-                        color: rockColor,
-                        roughness: 0.95,
-                        metalness: 0.1
-                    }),
-                    false
-                );
-                const matrix = new THREE.Matrix4().compose(
-                    new THREE.Vector3(x, terrainY + size * 0.3, z),
-                    new THREE.Quaternion().setFromEuler(rotation),
-                    new THREE.Vector3(size, size, size)
-                );
-                batch.matrices.push(matrix);
-                return;
-            }
-
-            const rockGroup = new THREE.Group();
-            const rockGeo = new THREE.DodecahedronGeometry(size, 1);
-            const positions = rockGeo.attributes.position;
-            for (let j = 0; j < positions.count; j++) {
-                const px = positions.getX(j);
-                const py = positions.getY(j);
-                const pz = positions.getZ(j);
-                const noise = 1 + (Math.random() - 0.5) * 0.3;
-                positions.setXYZ(j, px * noise, py * noise * 0.6, pz * noise);
-            }
-            rockGeo.computeVertexNormals();
-
-            const rockMat = new THREE.MeshStandardMaterial({
-                color: rockColor,
-                roughness: 0.95,
-                metalness: 0.1
-            });
-            const rock = new THREE.Mesh(rockGeo, rockMat);
-            rock.castShadow = true;
-            rock.receiveShadow = true;
-            rockGroup.add(rock);
-
-            rockGroup.position.set(x, terrainY + size * 0.3, z);
-            rockGroup.rotation.copy(rotation);
-            scene.add(rockGroup);
-            environmentObjects.push(rockGroup);
-            environmentColliders.push({
-                type: 'rock',
-                radius: size,
-                position: rockGroup.position
-            });
-        }
-
-        function finalizeEnvironmentInstances() {
-            [...treeInstanceParts, ...backgroundRockInstances].forEach(batch => {
-                if (batch.matrices.length === 0) return;
-                const mesh = new THREE.InstancedMesh(
-                    batch.geometryFactory(),
-                    batch.materialFactory(),
-                    batch.matrices.length
-                );
-                batch.matrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
-                mesh.instanceMatrix.needsUpdate = true;
-                mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-                mesh.castShadow = batch.castShadow;
-                mesh.frustumCulled = false;
-                mesh.userData.fullInstanceCount = batch.matrices.length;
-                if (batch.key.includes('background')) {
-                    mesh.userData.qualityCategory = 'background-decoration';
-                }
-                scene.add(mesh);
-                environmentObjects.push(mesh);
-            });
-
-            treeInstanceParts = [];
-            backgroundRockInstances = [];
-        }
-
-        function createGrass(biome) {
-            if (biome.grassCount === 0) return;
-
-            const grassGeo = new THREE.ConeGeometry(0.1, 0.8, 4);
-            const grassMat = new THREE.MeshStandardMaterial({
-                color: biome.grassColor,
-                roughness: 0.9,
-                side: THREE.DoubleSide
-            });
-            const bladeCount = biome.grassCount * 5;
-            const grass = new THREE.InstancedMesh(grassGeo, grassMat, bladeCount);
-            const blade = new THREE.Object3D();
-            let instanceIndex = 0;
-
-            for (let i = 0; i < biome.grassCount; i++) {
-                const localBlades = [];
-                for (let j = 0; j < 5; j++) {
-                    localBlades.push({
-                        x: (Math.random() - 0.5) * 0.5,
-                        z: (Math.random() - 0.5) * 0.5,
-                        rotationX: Math.random() * 0.3 - 0.15,
-                        rotationZ: Math.random() * 0.3 - 0.15
-                    });
-                }
-
-                const x = (Math.random() - 0.5) * 80;
-                const z = (Math.random() - 0.5) * 80;
-                const terrainY = getTerrainHeight(x, z);
-
-                localBlades.forEach(local => {
-                    blade.position.set(x + local.x, terrainY + 0.4, z + local.z);
-                    blade.rotation.set(local.rotationX, 0, local.rotationZ);
-                    blade.scale.set(1, 1, 1);
-                    blade.updateMatrix();
-                    grass.setMatrixAt(instanceIndex, blade.matrix);
-                    instanceIndex++;
-                });
-            }
-
-            grass.instanceMatrix.needsUpdate = true;
-            grass.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-            // Three.js r128 does not calculate a complete world-space bounds for
-            // every instance, so disable object-level culling for this batch.
-            grass.frustumCulled = false;
-            scene.add(grass);
-            environmentObjects.push(grass);
-        }
-
-        function createWater(biome) {
-            const waterGeo = new THREE.PlaneGeometry(30, 30, 20, 20);
-            const waterMat = new THREE.MeshStandardMaterial({
-                color: biome.waterColor,
-                transparent: true,
-                opacity: 0.7,
-                roughness: 0.1,
-                metalness: 0.8
-            });
-            waterMesh = new THREE.Mesh(waterGeo, waterMat);
-            waterMesh.rotation.x = -Math.PI / 2;
-            waterMesh.position.set(30, 0.2, -30);
-            scene.add(waterMesh);
-        }
-
-        function createLava(biome) {
-            for (let i = 0; i < 5; i++) {
-                const size = 3 + Math.random() * 5;
-                const lavaGeo = new THREE.CircleGeometry(size, 16);
-                const lavaMat = new THREE.MeshBasicMaterial({
-                    color: biome.lavaColor,
-                    transparent: true,
-                    opacity: 0.9
-                });
-                const lava = new THREE.Mesh(lavaGeo, lavaMat);
-                lava.rotation.x = -Math.PI / 2;
-
-                let x, z;
-                do {
-                    x = (Math.random() - 0.5) * 70;
-                    z = (Math.random() - 0.5) * 70;
-                } while (Math.abs(x) < 25 && Math.abs(z) < 25);
-
-                lava.position.set(x, 0.15, z);
-                lava.userData = { baseY: 0.15, phase: Math.random() * Math.PI * 2 };
-                scene.add(lava);
-                lavaMeshes.push(lava);
-
-                const glowLight = configureQualityOptionalLight(
-                    new THREE.PointLight(0xff4500, 2, 15)
-                );
-                glowLight.position.set(x, 1, z);
-                scene.add(glowLight);
-                environmentObjects.push(glowLight);
-            }
-        }
-
-        function createCrystals() {
-            for (let i = 0; i < 50; i++) {
-                const crystal = new THREE.Group();
-
-                const height = 1 + Math.random() * 4;
-                const crystalGeo = new THREE.ConeGeometry(0.3 + Math.random() * 0.4, height, 6);
-                const hue = Math.random();
-                const crystalMat = new THREE.MeshStandardMaterial({
-                    color: new THREE.Color().setHSL(0.5 + hue * 0.2, 0.8, 0.5),
-                    transparent: true,
-                    opacity: 0.8,
-                    roughness: 0.1,
-                    metalness: 0.9,
-                    emissive: new THREE.Color().setHSL(0.5 + hue * 0.2, 0.8, 0.3),
-                    emissiveIntensity: 0.5
-                });
-                const crystalMesh = new THREE.Mesh(crystalGeo, crystalMat);
-                crystalMesh.position.y = height / 2;
-                crystalMesh.rotation.z = (Math.random() - 0.5) * 0.3;
-                crystal.add(crystalMesh);
-
-                let x, z;
-                do {
-                    x = (Math.random() - 0.5) * 85;
-                    z = (Math.random() - 0.5) * 85;
-                } while (Math.abs(x) < 20 && Math.abs(z) < 20);
-
-                const terrainY = getTerrainHeight(x, z);
-                crystal.position.set(x, terrainY, z);
-                crystal.rotation.y = Math.random() * Math.PI * 2;
-
-                scene.add(crystal);
-                environmentObjects.push(crystal);
-
-                if (Math.random() > 0.6) {
-                    const glowLight = configureQualityOptionalLight(
-                        new THREE.PointLight(crystalMat.color, 0.5, 8)
-                    );
-                    glowLight.position.set(x, terrainY + height / 2, z);
-                    scene.add(glowLight);
-                    environmentObjects.push(glowLight);
-                }
-            }
-        }
-
-        function createDunes(biome) {
-            for (let i = 0; i < 10; i++) {
-                const duneGeo = new THREE.SphereGeometry(12 + Math.random() * 8, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
-                const duneMat = new THREE.MeshStandardMaterial({
-                    color: biome.groundColor,
-                    roughness: 0.9
-                });
-                const dune = new THREE.Mesh(duneGeo, duneMat);
-
-                const angle = (i / 10) * Math.PI * 2;
-                const dist = 50 + Math.random() * 20;
-                dune.position.set(Math.cos(angle) * dist, -3, Math.sin(angle) * dist);
-                dune.scale.y = 0.35;
-                dune.receiveShadow = true;
-
-                scene.add(dune);
-                environmentObjects.push(dune);
-            }
-        }
-
-        function createSpikes() {
-            for (let i = 0; i < 30; i++) {
-                const height = 2 + Math.random() * 5;
-                const spikeGeo = new THREE.ConeGeometry(0.5 + Math.random() * 0.5, height, 5);
-                const spikeMat = new THREE.MeshStandardMaterial({
-                    color: 0x1a1a1a,
-                    roughness: 0.8,
-                    metalness: 0.3
-                });
-                const spike = new THREE.Mesh(spikeGeo, spikeMat);
-
-                let x, z;
-                do {
-                    x = (Math.random() - 0.5) * 80;
-                    z = (Math.random() - 0.5) * 80;
-                } while (Math.abs(x) < 22 && Math.abs(z) < 22);
-
-                const terrainY = getTerrainHeight(x, z);
-                spike.position.set(x, terrainY + height / 2, z);
-                spike.rotation.z = (Math.random() - 0.5) * 0.3;
-                spike.castShadow = true;
-
-                scene.add(spike);
-                environmentObjects.push(spike);
-            }
-        }
+        // Legacy bounded-arena scenery builders were removed in Phase 17.
+        // Streamed chunks now own all terrain props, cover, and special features.
 
         function getEnvironmentParticleVisual(biome) {
             switch (biome.particleType) {
@@ -3089,11 +3154,13 @@
                     batches.push(batch);
                 }
 
+                const particleCenterX = player ? player.mesh.position.x : 0;
+                const particleCenterZ = player ? player.mesh.position.z : 0;
                 const particle = {
                     position: new THREE.Vector3(
-                        (Math.random() - 0.5) * 100,
+                        particleCenterX + (Math.random() - 0.5) * 100,
                         Math.random() * 20 + 2,
-                        (Math.random() - 0.5) * 100
+                        particleCenterZ + (Math.random() - 0.5) * 100
                     ),
                     velocity: new THREE.Vector3(
                         (Math.random() - 0.5) * 2,
@@ -3133,6 +3200,49 @@
                 scene.add(mesh);
                 environmentParticleBatches.push(mesh);
             });
+        }
+
+        function isWorldPositionBlocked(position, radius = WORLD_CONFIG.playerColliderRadius) {
+            const nearby = getNearbyEnvironmentColliders(position);
+            return nearby.some(collider => {
+                const dx = position.x - collider.position.x;
+                const dz = position.z - collider.position.z;
+                const combinedRadius = radius + collider.radius;
+                return dx * dx + dz * dz < combinedRadius * combinedRadius;
+            });
+        }
+
+        function resolvePlayerWorldMovement(currentPosition, desiredPosition) {
+            if (!isWorldPositionBlocked(desiredPosition)) return desiredPosition;
+            const slideX = desiredPosition.clone();
+            slideX.z = currentPosition.z;
+            if (!isWorldPositionBlocked(slideX)) return slideX;
+            const slideZ = desiredPosition.clone();
+            slideZ.x = currentPosition.x;
+            if (!isWorldPositionBlocked(slideZ)) return slideZ;
+            return currentPosition.clone();
+        }
+
+        function getEnemyAvoidanceInput(tank, inputVec) {
+            if (tank.isPlayer || inputVec.lengthSq() < 0.01) return inputVec;
+            const desired = new THREE.Vector2(inputVec.x, inputVec.y).normalize();
+            const lookAhead = tank.mesh.position.clone().add(
+                new THREE.Vector3(desired.x, 0, desired.y).multiplyScalar(4.5)
+            );
+            const avoidance = new THREE.Vector2();
+            getNearbyEnvironmentColliders(tank.mesh.position, lookAhead).forEach(collider => {
+                const dx = lookAhead.x - collider.position.x;
+                const dz = lookAhead.z - collider.position.z;
+                const distanceSq = dx * dx + dz * dz;
+                const influence = collider.radius + 3.5;
+                if (distanceSq < influence * influence) {
+                    const distance = Math.sqrt(Math.max(0.001, distanceSq));
+                    avoidance.x += dx / distance * (1 - distance / influence);
+                    avoidance.y += dz / distance * (1 - distance / influence);
+                }
+            });
+            if (avoidance.lengthSq() > 0.001) desired.add(avoidance.multiplyScalar(1.4));
+            return desired.normalize();
         }
 
         // ============================================
@@ -3520,7 +3630,10 @@
                 // Calculate acceleration for tilt animation
                 const prevVel = this.velocity.clone();
 
-                if (inputVec.length() > 0.1) {
+                const effectiveInput = this.isPlayer
+                    ? inputVec
+                    : getEnemyAvoidanceInput(this, inputVec);
+                if (effectiveInput.length() > 0.1) {
                     let speed = CONFIG.playerSpeed;
                     if (this.isPlayer) {
                         speed *= state.playerStats.speed / 100;
@@ -3535,7 +3648,11 @@
                     // Store velocity in world units per second. Integrate the
                     // original 60 FPS smoothing curve over the full time step so
                     // 30, 60, and 120 FPS travel the same distance.
-                    const move = new THREE.Vector3(inputVec.x, 0, inputVec.y).normalize().multiplyScalar(speed);
+                    const move = new THREE.Vector3(
+                        effectiveInput.x,
+                        0,
+                        effectiveInput.y
+                    ).normalize().multiplyScalar(speed);
                     const frameCount = dt * BASELINE_FPS;
                     const retentionAt60Fps = 0.85;
                     const retainedVelocity = Math.pow(retentionAt60Fps, frameCount);
@@ -3550,9 +3667,18 @@
                         prevVel.clone().sub(move).multiplyScalar(retainedVelocity)
                     );
 
-                    const nextPos = this.mesh.position.clone().add(displacement);
-                    nextPos.x = Math.max(-44, Math.min(44, nextPos.x));
-                    nextPos.z = Math.max(-44, Math.min(44, nextPos.z));
+                    let nextPos = this.mesh.position.clone().add(displacement);
+                    if (this.isPlayer) {
+                        nextPos = resolvePlayerWorldMovement(this.mesh.position, nextPos);
+                    }
+                    nextPos.x = Math.max(
+                        -WORLD_CONFIG.maxCoordinate,
+                        Math.min(WORLD_CONFIG.maxCoordinate, nextPos.x)
+                    );
+                    nextPos.z = Math.max(
+                        -WORLD_CONFIG.maxCoordinate,
+                        Math.min(WORLD_CONFIG.maxCoordinate, nextPos.z)
+                    );
                     this.mesh.position.copy(nextPos);
 
                     // Smooth rotation
@@ -4537,7 +4663,13 @@
             );
             core.position.y = 1.4;
             group.add(base, core);
-            group.position.y = getTerrainHeight(0, 0);
+            const anchorX = state.activeObjective?.anchorX || 0;
+            const anchorZ = state.activeObjective?.anchorZ || 0;
+            group.position.set(
+                anchorX,
+                getTerrainHeight(anchorX, anchorZ),
+                anchorZ
+            );
             scene.add(group);
             objectiveBeacon = group;
         }
@@ -4563,8 +4695,14 @@
         function spawnMarkedHeavy() {
             if (!player || enemies.some(enemy => enemy.isObjectiveTarget && !enemy.isDead)) return;
             const heavy = new Tank(ENEMY_TYPES.heavy.color, false, 'heavy');
-            const angle = Math.random() * Math.PI * 2;
-            heavy.mesh.position.set(Math.cos(angle) * 32, 0, Math.sin(angle) * 32);
+            const anchorX = state.activeObjective?.anchorX ?? player.mesh.position.x;
+            const anchorZ = state.activeObjective?.anchorZ ?? player.mesh.position.z;
+            heavy.mesh.position.copy(findOpenWorldPositionAround(
+                new THREE.Vector3(anchorX, 0, anchorZ),
+                28,
+                36,
+                2.8
+            ));
             heavy.move(0, new THREE.Vector2(0, 0));
             markObjectiveTarget(heavy);
             enemies.push(heavy);
@@ -4599,7 +4737,9 @@
                 progress: 0,
                 elapsed: 0,
                 startScore: state.score,
-                beaconHp: 100
+                beaconHp: 100,
+                anchorX: player?.mesh.position.x || 0,
+                anchorZ: player?.mesh.position.z || 0
             };
             state.lastObjectiveRealm = state.realmProgress;
             restoreObjectiveVisuals();
@@ -4670,10 +4810,12 @@
             }
 
             if (objective.type === 'defend') {
+                const anchorX = objective.anchorX || 0;
+                const anchorZ = objective.anchorZ || 0;
                 const nearbyEnemies = enemies.filter(enemy => {
                     if (enemy.isDead) return false;
-                    const x = enemy.mesh.position.x;
-                    const z = enemy.mesh.position.z;
+                    const x = enemy.mesh.position.x - anchorX;
+                    const z = enemy.mesh.position.z - anchorZ;
                     return x * x + z * z < 64;
                 }).length;
                 objective.beaconHp = Math.max(0, objective.beaconHp - nearbyEnemies * 3 * dt);
@@ -4745,9 +4887,13 @@
                 : REALM_GUARDIAN_TYPES[state.currentBiome % REALM_GUARDIAN_TYPES.length];
             if (!guardianType) return null;
             const data = ENEMY_TYPES[guardianType];
-            const angle = Math.random() * Math.PI * 2;
             const boss = new Tank(data.color, false, guardianType);
-            boss.mesh.position.set(Math.cos(angle) * 36, 0, Math.sin(angle) * 36);
+            boss.mesh.position.copy(findOpenWorldPositionAround(
+                player.mesh.position,
+                44,
+                52,
+                3.4
+            ));
             boss.move(0, new THREE.Vector2(0, 0));
             const now = clock.getElapsedTime();
             boss.nextBossAttackTime = now + 1.2;
@@ -4943,6 +5089,8 @@
             state.dailyBiomeOffset = dailyDefinition?.biomeOffset || 0;
             state.dailyEnemyIndex = 0;
             state.dailyUpgradeIndex = 0;
+            state.worldSeed = createRunWorldSeed(requestedMode, state.dailySeed);
+            state.destroyedCoverIds = [];
             if (dailyDefinition) {
                 const record = profile.dailyRecords[dailyDefinition.dateKey] || {
                     bestScore: 0,
@@ -5053,6 +5201,8 @@
             state.level = savedRun.level;
             state.xpToNext = savedRun.xpToNext;
             state.currentBiome = savedRun.currentBiome;
+            state.worldSeed = savedRun.worldSeed;
+            state.destroyedCoverIds = [...savedRun.destroyedCoverIds];
             state.gameMode = savedRun.gameMode;
             state.modeState = { ...savedRun.modeState };
             state.practiceConfig = sanitizePracticeConfig();
@@ -5105,7 +5255,6 @@
 
             const savedTank = TANK_DESIGNS[state.runTankId];
             player = new Tank(savedTank.color, true, 'soldier', state.runTankId);
-            loadBiome(savedRun.currentBiome);
             player.hp = savedRun.player.hp;
             player.maxHp = state.playerStats.maxHp;
             player.mesh.position.set(
@@ -5114,6 +5263,7 @@
                 savedRun.player.position.z
             );
             player.mesh.rotation.y = savedRun.player.rotationY;
+            loadBiome(savedRun.currentBiome);
             player.move(0, new THREE.Vector2(0, 0));
 
             savedRun.enemies.forEach(savedEnemy => {
@@ -5418,14 +5568,43 @@
             return { scoreReward, coinReward };
         }
 
+        function repositionDistantEnemies() {
+            if (!player) return 0;
+            const maxDistanceSq = WORLD_CONFIG.enemyRepositionDistance ** 2;
+            let repositioned = 0;
+            enemies.forEach(enemy => {
+                if (enemy.isDead || enemy.typeData?.isBoss || enemy.isObjectiveTarget) return;
+                const dx = enemy.mesh.position.x - player.mesh.position.x;
+                const dz = enemy.mesh.position.z - player.mesh.position.z;
+                if (dx * dx + dz * dz <= maxDistanceSq) return;
+                const regroupPosition = findOpenWorldPositionAround(
+                    player.mesh.position,
+                    WORLD_CONFIG.enemySpawnMinDistance,
+                    WORLD_CONFIG.enemySpawnMaxDistance
+                );
+                enemy.mesh.position.copy(regroupPosition);
+                enemy.velocity.set(0, 0, 0);
+                enemy.move(0, new THREE.Vector2(0, 0));
+                repositioned++;
+            });
+            if (repositioned > 0) {
+                const now = clock.getElapsedTime();
+                if (now - (state.lastEnemyRepositionNoticeTime || -999) > 12) {
+                    state.lastEnemyRepositionNoticeTime = now;
+                    showUpgradeNotification('⚠ Distant enemies regrouped ahead');
+                }
+            }
+            return repositioned;
+        }
+
         function spawnEnemy(enemyLevel = state.level) {
             if (!state.isPlaying || !player || state.gameMode === 'bossHunt') return;
 
-            let x, z;
-            do {
-                x = (Math.random() - 0.5) * 80;
-                z = (Math.random() - 0.5) * 80;
-            } while (player.mesh.position.distanceTo(new THREE.Vector3(x, 0, z)) < 25);
+            const spawnPosition = findOpenWorldPositionAround(
+                player.mesh.position,
+                WORLD_CONFIG.enemySpawnMinDistance,
+                WORLD_CONFIG.enemySpawnMaxDistance
+            );
 
             const type = state.activeObjective?.type === 'medics' && Math.random() < 0.35
                 ? 'healer'
@@ -5433,7 +5612,7 @@
             showEnemyIntro(type);
 
             const enemy = new Tank(ENEMY_TYPES[type].color, false, type);
-            enemy.mesh.position.set(x, 0, z);
+            enemy.mesh.position.copy(spawnPosition);
             enemies.push(enemy);
         }
 
@@ -5690,6 +5869,7 @@
             updateRealmObjective(dt);
             updateHazards(dt);
             updateCommanderBuffs();
+            repositionDistantEnemies();
             state.abilityState.timeSinceDamage += dt;
             state.abilityState.reactiveReadyIn = Math.max(0, state.abilityState.reactiveReadyIn - dt);
             state.abilityState.emergencyReadyIn = Math.max(0, state.abilityState.emergencyReadyIn - dt);
@@ -5851,59 +6031,44 @@
 
                 let hit = false;
 
-                // Swept wall check. Move the impact effect to the arena edge
-                // instead of allowing a long frame to place it beyond the wall.
-                const wallHitTime = getArenaBoundaryHitTime(
+                // Infinite worlds have no arena wall. Swept collision checks only
+                // nearby streamed cover. Ricochet now bounces from hard rocks and
+                // crystal pillars, preserving the approved upgrade without a box.
+                for (const collider of getNearbyEnvironmentColliders(
                     b.previousPosition,
                     b.group.position
-                );
-                if (wallHitTime !== null) {
-                    bulletImpactPosition.copy(b.previousPosition).lerp(b.group.position, wallHitTime);
+                )) {
+                    const colliderHitTime = getSegmentCylinderHitTime(
+                        b.previousPosition,
+                        b.group.position,
+                        collider.position,
+                        collider.radius,
+                        5
+                    );
+                    if (colliderHitTime === null) continue;
+                    bulletImpactPosition.copy(b.previousPosition).lerp(
+                        b.group.position,
+                        colliderHitTime
+                    );
                     b.group.position.copy(bulletImpactPosition);
-                    createExplosion(b.group.position, 6, 0x888888, 'wall');
-                    if (b.group.userData.ricochetsRemaining > 0) {
-                        if (Math.abs(Math.abs(b.group.position.x) - 46) < 0.2) {
-                            b.group.userData.vel.x *= -1;
-                        }
-                        if (Math.abs(Math.abs(b.group.position.z) - 46) < 0.2) {
-                            b.group.userData.vel.z *= -1;
-                        }
+                    createExplosion(b.group.position, 8, 0xaaaaaa, collider.type);
+                    if (collider.hard && b.group.userData.ricochetsRemaining > 0) {
+                        const normal = new THREE.Vector3(
+                            b.group.position.x - collider.position.x,
+                            0,
+                            b.group.position.z - collider.position.z
+                        ).normalize();
+                        b.group.userData.vel.reflect(normal);
                         b.group.userData.ricochetsRemaining--;
                         b.group.position.addScaledVector(
                             b.group.userData.vel.clone().normalize(),
-                            0.08
+                            0.12
                         );
                         b.frameEndPosition.copy(b.group.position);
                     } else {
                         hit = true;
                     }
-                }
-
-                // Environment Object Check (foreground trees and rocks only).
-                // Distant decorations and non-collidable visuals are not scanned.
-                if (!hit) {
-                    for (const collider of environmentColliders) {
-                        const colliderHitTime = getSegmentCylinderHitTime(
-                            b.previousPosition,
-                            b.group.position,
-                            collider.position,
-                            collider.radius,
-                            5
-                        );
-
-                        // Preserve the existing cylinder hitbox dimensions while
-                        // checking the complete distance travelled this frame.
-                        if (colliderHitTime !== null) {
-                            bulletImpactPosition.copy(b.previousPosition).lerp(
-                                b.group.position,
-                                colliderHitTime
-                            );
-                            b.group.position.copy(bulletImpactPosition);
-                            hit = true;
-                            createExplosion(b.group.position, 8, 0xaaaaaa, collider.type);
-                            break;
-                        }
-                    }
+                    break;
                 }
 
                 if (!hit) {
@@ -6069,8 +6234,10 @@
 
                 if (p.position.y < 0) p.position.y = 20;
                 if (p.position.y > 25) p.position.y = 0;
-                if (Math.abs(p.position.x) > 60) p.position.x *= -0.9;
-                if (Math.abs(p.position.z) > 60) p.position.z *= -0.9;
+                if (p.position.x - player.mesh.position.x > 60) p.position.x -= 120;
+                if (player.mesh.position.x - p.position.x > 60) p.position.x += 120;
+                if (p.position.z - player.mesh.position.z > 60) p.position.z -= 120;
+                if (player.mesh.position.z - p.position.z > 60) p.position.z += 120;
 
                 environmentParticleTransform.position.copy(p.position);
                 environmentParticleTransform.rotation.set(0, 0, 0);
@@ -6082,23 +6249,28 @@
                 batch.instanceMatrix.needsUpdate = true;
             });
 
-            // Animate lava
-            lavaMeshes.forEach(lava => {
+            // Animate streamed lava and water without creating per-pool lights.
+            [...lavaMeshes, ...worldLavaMeshes].forEach(lava => {
                 lava.userData.phase += dt * 2;
-                lava.material.opacity = 0.8 + Math.sin(lava.userData.phase) * 0.15;
+                lava.material.opacity = 0.8 + Math.sin(lava.userData.phase) * 0.12;
             });
-
-            // Animate water
-            if (waterMesh) {
-                const time = clock.getElapsedTime();
-                const positions = waterMesh.geometry.attributes.position;
-                for (let i = 0; i < positions.count; i++) {
-                    const x = positions.getX(i);
-                    const y = positions.getY(i);
-                    positions.setZ(i, Math.sin(x * 0.3 + time) * 0.3 + Math.cos(y * 0.3 + time * 0.7) * 0.2);
+            const waterTime = clock.getElapsedTime();
+            const activeWaterMeshes = waterMesh ? [waterMesh, ...waterMeshes] : waterMeshes;
+            activeWaterMeshes.forEach(water => {
+                const positions = water.geometry.attributes.position;
+                for (let index = 0; index < positions.count; index++) {
+                    const x = positions.getX(index);
+                    const y = positions.getY(index);
+                    positions.setZ(
+                        index,
+                        Math.sin(x * 0.3 + waterTime) * 0.16 +
+                            Math.cos(y * 0.3 + waterTime * 0.7) * 0.1
+                    );
                 }
                 positions.needsUpdate = true;
-            }
+            });
+
+            updateInfiniteWorld();
 
             // Spawner. Each mode owns an isolated spawn curve so Adventure and
             // Daily retain their established timing and guardian gates.
@@ -6290,9 +6462,16 @@
                 );
             }
             direction.normalize().multiplyScalar(6);
-            const nextPosition = player.mesh.position.clone().add(direction);
-            nextPosition.x = Math.max(-44, Math.min(44, nextPosition.x));
-            nextPosition.z = Math.max(-44, Math.min(44, nextPosition.z));
+            let nextPosition = player.mesh.position.clone().add(direction);
+            nextPosition = resolvePlayerWorldMovement(player.mesh.position, nextPosition);
+            nextPosition.x = Math.max(
+                -WORLD_CONFIG.maxCoordinate,
+                Math.min(WORLD_CONFIG.maxCoordinate, nextPosition.x)
+            );
+            nextPosition.z = Math.max(
+                -WORLD_CONFIG.maxCoordinate,
+                Math.min(WORLD_CONFIG.maxCoordinate, nextPosition.z)
+            );
             nextPosition.y = getTerrainHeight(nextPosition.x, nextPosition.z) + 0.1;
             player.mesh.position.copy(nextPosition);
             state.abilityState.dashReadyIn = 4;
