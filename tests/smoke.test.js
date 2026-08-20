@@ -153,7 +153,19 @@ function createHarness(storageSeed = {}) {
       renderDailyChallenge,
       openDailyChallenge,
       closeDailyChallenge,
+      openGameModes,
+      closeGameModes,
+      renderPracticeSetup,
+      openPracticeSetup,
+      closePracticeSetup,
+      readPracticeSetup,
+      sanitizePracticeConfig,
+      getGameModeDefinition,
       getEnemyTypeForLevel,
+      getModeSpawnSettings,
+      getLastStandThreatTier,
+      updateModeState,
+      updateModeHUD,
       saveActiveRun,
       clearActiveRunSave,
       sanitizeProfile,
@@ -995,6 +1007,172 @@ test('daily best score and level save locally', () => {
   assert.equal(
     harness.window.document.getElementById('daily-best-level').textContent,
     '12'
+  );
+  harness.dom.window.close();
+});
+
+test('additional game modes start with isolated rules and savable mode IDs', () => {
+  const harness = createHarness();
+  const { api, window } = harness;
+  const savableModes = ['bossHunt', 'lastStand', 'realmRush', 'oneTank'];
+
+  for (const mode of savableModes) {
+    api.startGame({ mode });
+    assert.equal(api.state().gameMode, mode);
+    assert.equal(api.saveActiveRun(), true);
+    const snapshot = JSON.parse(
+      window.localStorage.getItem('tank_realms_active_run_v1')
+    );
+    assert.equal(snapshot.gameMode, mode);
+  }
+
+  api.quitToMenu();
+  api.openGameModes();
+  assert.equal(
+    window.document.querySelectorAll('[data-run-mode]').length,
+    4
+  );
+  assert.equal(
+    window.document.getElementById('game-modes-screen').classList.contains('hidden'),
+    false
+  );
+  harness.dom.window.close();
+});
+
+test('Boss Hunt starts one guardian and disables normal waves and objectives', () => {
+  const harness = createHarness();
+  harness.api.startGame({ mode: 'bossHunt' });
+
+  assert.equal(harness.api.state().guardianPending, false);
+  assert.equal(harness.api.state().modeState.guardianIndex, 0);
+  assert.equal(harness.api.enemies().length, 1);
+  assert.equal(harness.api.activeBoss().type, 'forestGuardian');
+  assert.equal(harness.api.getModeSpawnSettings(), null);
+  assert.equal(harness.api.startRealmObjectiveIfNeeded(), false);
+  assert.match(
+    harness.window.document.getElementById('mode-hud-status').textContent,
+    /Guardian 1 of 6/
+  );
+  harness.dom.window.close();
+});
+
+test('Boss Hunt advances through all six guardians to a victory result', () => {
+  const harness = createHarness();
+  harness.api.startGame({ mode: 'bossHunt' });
+
+  for (let guardianIndex = 0; guardianIndex < 6; guardianIndex++) {
+    const boss = harness.api.activeBoss();
+    assert.ok(boss);
+    assert.equal(boss.type, harness.api.guardianTypes()[guardianIndex]);
+    boss.hp = 0;
+    boss.isDead = true;
+    harness.api.handleGuardianDefeat(boss);
+  }
+
+  assert.equal(harness.api.state().gamePhase, 'gameover');
+  assert.equal(harness.api.state().runOutcome, 'victory');
+  assert.equal(
+    harness.window.document.getElementById('result-title').textContent,
+    '🏆 Hunt Complete'
+  );
+  harness.dom.window.close();
+});
+
+test('Last Stand spawn pressure rises predictably with survival time', () => {
+  const harness = createHarness();
+  harness.api.startGame({ mode: 'lastStand' });
+  const opening = { ...harness.api.getModeSpawnSettings(0) };
+  const twoMinutes = { ...harness.api.getModeSpawnSettings(120) };
+
+  assert.ok(twoMinutes.spawnRate < opening.spawnRate);
+  assert.ok(twoMinutes.maxEnemies > opening.maxEnemies);
+  assert.equal(harness.api.getLastStandThreatTier(0), 1);
+  assert.equal(harness.api.getLastStandThreatTier(120), 5);
+  assert.equal(harness.api.state().guardianPending, false);
+  assert.equal(harness.api.startRealmObjectiveIfNeeded(), false);
+  harness.dom.window.close();
+});
+
+test('Realm Rush timer and biome state survive Continue and end at three minutes', () => {
+  const first = createHarness();
+  first.api.startGame({ mode: 'realmRush' });
+  first.api.updateModeState(45);
+  const expectedTime = first.api.state().modeState.timeRemaining;
+  const expectedBiome = first.api.state().currentBiome;
+  first.api.saveActiveRun();
+  const savedRun = first.window.localStorage.getItem('tank_realms_active_run_v1');
+  first.dom.window.close();
+
+  const second = createHarness({ tank_realms_active_run_v1: savedRun });
+  assert.equal(second.api.continueSavedRun(), true);
+  assert.equal(second.api.state().gameMode, 'realmRush');
+  assert.equal(second.api.state().modeState.timeRemaining, expectedTime);
+  assert.equal(second.api.state().currentBiome, expectedBiome);
+  second.api.updateModeState(expectedTime);
+  assert.equal(second.api.state().gamePhase, 'gameover');
+  assert.equal(second.api.state().runOutcome, 'complete');
+  assert.equal(
+    second.window.document.getElementById('result-title').textContent,
+    '⏱ Rush Complete'
+  );
+  second.dom.window.close();
+});
+
+test('One-Tank Challenge removes permanent stats but keeps temporary upgrades', () => {
+  const harness = createHarness();
+  harness.api.profile().tankUpgrades.vanguard.damage = 5;
+  harness.api.profile().tankUpgrades.vanguard.maxHp = 5;
+  harness.api.startGame({ mode: 'oneTank' });
+
+  assert.equal(harness.api.state().runBaseStats.damage, 100);
+  assert.equal(harness.api.state().runBaseStats.maxHp, 100);
+  assert.equal(harness.api.state().runPermanentUpgrades.damage, 0);
+  harness.api.addXP(100);
+  const damageChoice = harness.api.state().currentUpgradeChoices.includes('damage');
+  if (damageChoice) {
+    harness.api.applyUpgradeChoice('damage');
+    assert.equal(harness.api.state().playerStats.damage, 120);
+  } else {
+    assert.equal(harness.api.state().currentUpgradeChoices.length, 3);
+  }
+  harness.dom.window.close();
+});
+
+test('Custom Practice honors setup and cannot change permanent progress or a saved run', () => {
+  const harness = createHarness();
+  const { api, window } = harness;
+  api.startGame();
+  api.state().score = 4321;
+  api.saveActiveRun();
+  const preservedRun = window.localStorage.getItem('tank_realms_active_run_v1');
+  const coinsBefore = api.profile().coins;
+  const masteryBefore = JSON.stringify(api.profile().tankMastery);
+
+  api.startGame({
+    mode: 'practice',
+    practiceConfig: {
+      biomeIndex: 4,
+      startingLevel: 15,
+      allowedEnemies: ['sniper']
+    }
+  });
+  assert.equal(api.state().gameMode, 'practice');
+  assert.equal(api.state().currentBiome, 4);
+  assert.equal(api.state().level, 15);
+  assert.equal(api.getEnemyTypeForLevel(30), 'sniper');
+  assert.equal(api.saveActiveRun(), false);
+  const reward = api.awardEnemyKill(100, api.makeEnemy('sniper', 20, 20));
+  assert.equal(reward.coinReward, 0);
+  assert.equal(api.profile().coins, coinsBefore);
+  assert.equal(JSON.stringify(api.profile().tankMastery), masteryBefore);
+  assert.equal(window.localStorage.getItem('tank_realms_active_run_v1'), preservedRun);
+
+  api.endGame();
+  assert.equal(api.profile().bestScore, 4321);
+  assert.equal(window.localStorage.getItem('tank_realms_active_run_v1'), preservedRun);
+  assert.match(
+    window.document.getElementById('result-record').textContent,
+    /not saved/
   );
   harness.dom.window.close();
 });

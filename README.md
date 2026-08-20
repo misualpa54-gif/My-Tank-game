@@ -4,17 +4,18 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phases 1–13 provide the stable offline APK plus optimization, saving, economy, tanks, quality, accessibility, guardians, strategic enemies, objectives, evolutions, mastery and achievements. Phase 14 adds a deterministic offline Daily Challenge:
+Phases 1–14 provide the stable offline APK plus optimization, saving, economy, tanks, quality, accessibility, guardians, strategic enemies, objectives, evolutions, mastery, achievements, and the deterministic offline Daily Challenge. Phase 15 adds the approved additional game modes:
 
-- the local calendar date creates a fixed modifier, starting biome, biome order, enemy sequence, upgrade choices and objective rotation;
-- Scout Swarm, Heavy Armor, No Regeneration, Double Combo Coins, Sniper Realm and Fast Enemy modifiers rotate by date;
-- daily runs keep the selected tank appearance/mastery cosmetics but disable permanent stat upgrades for equal base balance;
-- a Daily menu shows the modifier, starting biome, local best score/level and attempts;
-- daily enemy and upgrade indexes survive Continue so reopening cannot reroll choices;
-- Try Again restarts the same daily challenge;
-- local records are sanitized and limited to the latest 30 dates;
-- no internet, account, global leaderboard or network permission is added;
-- all previous mastery, achievement, evolution, objective, guardian, quality, save, garage, portrait, performance, timing, collision, audio, accessibility, offline and Android behavior remains active.
+- **Boss Hunt** battles all six established Realm Guardians in order without normal enemy waves;
+- **Last Stand** uses an endless, capped survival curve that increases spawn pressure every 20–30 seconds;
+- **Realm Rush** rotates through all six biomes during a fixed three-minute score-and-level challenge;
+- **One-Tank Challenge** keeps the selected tank and temporary upgrades while disabling permanent stat upgrades;
+- **Custom Practice** lets the player choose a biome, starting level, and any combination of 12 normal enemy types;
+- Practice cannot alter coins, best records, mastery, achievements, lifetime statistics, or a preserved living run;
+- every reward mode stores its mode-specific state for Continue, including the active Boss Hunt guardian and Realm Rush timer;
+- a compact portrait-safe mode HUD shows guardian order, threat tier, countdown, or special rules;
+- Adventure and Daily behavior remains unchanged;
+- no internet, account, ads, real-money purchases, or network permission is added.
 
 Detailed reports are in:
 
@@ -30,8 +31,9 @@ Detailed reports are in:
 - `docs/phase12-upgrade-evolutions-report.md`
 - `docs/phase13-mastery-achievements-report.md`
 - `docs/phase14-offline-daily-challenge-report.md`
+- `docs/phase15-additional-game-modes-report.md`
 
-The next approved stage is additional game modes. Final-release signing and store work remain separate.
+The approved gameplay roadmap is now complete through the additional game modes package. Final-release signing, app icon/splash replacement, and store work remain separate.
 
 ## Project structure
 

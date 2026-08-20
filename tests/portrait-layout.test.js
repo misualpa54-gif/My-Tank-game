@@ -65,7 +65,14 @@ test('garage and combo UI are present in the portrait-safe layout', () => {
   assert.match(html, /id="btn-achievements"/);
   assert.match(html, /id="daily-screen"/);
   assert.match(html, /id="btn-daily"/);
+  assert.match(html, /id="game-modes-screen"/);
+  assert.match(html, /id="practice-screen"/);
+  assert.match(html, /id="mode-hud"/);
+  assert.equal((html.match(/data-run-mode=/g) || []).length, 4);
   assert.match(css, /\.daily-modifier/);
+  assert.match(css, /\.mode-card/);
+  assert.match(css, /\.practice-enemy-list/);
+  assert.match(css, /body\.mode-hud-visible #boss-hud/);
   assert.match(css, /\.garage-panel/);
   assert.match(css, /\.achievement-card/);
   assert.match(css, /#boss-health-fill/);

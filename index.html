@@ -55,6 +55,10 @@
 
 
     <div class="biome-indicator" id="biome-name">Forest Realm</div>
+    <div id="mode-hud" aria-live="polite">
+        <strong id="mode-hud-name">Game Mode</strong>
+        <span id="mode-hud-status">Status</span>
+    </div>
     <div id="combo-indicator" aria-live="polite">🔥 Combo <strong id="combo-count">2</strong> • ×<span id="combo-multiplier">1.2</span></div>
 
     <div id="objective-hud" aria-live="polite">
@@ -96,6 +100,7 @@
         <button type="button" class="btn btn-garage" id="btn-garage">Garage</button>
         <button type="button" class="btn btn-achievements" id="btn-achievements">Achievements</button>
         <button type="button" class="btn btn-daily" id="btn-daily">Daily Challenge</button>
+        <button type="button" class="btn btn-modes" id="btn-game-modes">Game Modes</button>
         <button type="button" class="btn" id="btn-start">Start Adventure</button>
         <div class="game-info">
             Lower left: Move • Lower right: Hold to fire<br>
@@ -114,7 +119,7 @@
     <div id="new-run-confirm-screen" class="screen hidden" role="dialog" aria-modal="true">
         <div class="confirmation-panel">
             <h1>Replace Run?</h1>
-            <p>A living run is available. Starting a new adventure will replace it.</p>
+            <p>A living run is available. Starting <strong id="confirm-run-name">this mode</strong> will replace it.</p>
             <button type="button" class="btn" id="confirm-continue-run">Continue Existing</button>
             <button type="button" class="btn btn-restart" id="confirm-new-run">Start New Run</button>
             <button type="button" class="btn" id="cancel-new-run">Cancel</button>
@@ -135,7 +140,8 @@
 
     <div id="game-over-screen" class="screen hidden">
         <div class="results-panel">
-            <h1>💀 Defeated</h1>
+            <div class="tutorial-step-count" id="result-mode">Adventure</div>
+            <h1 id="result-title">💀 Defeated</h1>
             <h2>Score: <span id="final-score">0</span> • Level: <span id="final-level">1</span></h2>
             <div class="results-grid">
                 <div><span>💰 Run coins</span><strong id="result-coins">0</strong></div>
@@ -153,6 +159,62 @@
     </div>
 
 
+    <div id="game-modes-screen" class="screen hidden">
+        <div class="modes-panel">
+            <div class="tutorial-step-count">Additional Game Modes</div>
+            <h1>Choose a Mode</h1>
+            <p class="modes-intro">Each mode keeps the same portrait controls, tanks, upgrades, and offline play.</p>
+            <div class="mode-card-list">
+                <button type="button" class="mode-card" data-run-mode="bossHunt">
+                    <span class="mode-card-icon">👑</span>
+                    <span><strong>Boss Hunt</strong><small>Battle all six Realm Guardians in order. No normal enemy waves.</small></span>
+                    <em>6 guardians</em>
+                </button>
+                <button type="button" class="mode-card" data-run-mode="lastStand">
+                    <span class="mode-card-icon">⚔</span>
+                    <span><strong>Last Stand</strong><small>Survive an endless assault that spawns enemies faster over time.</small></span>
+                    <em>Endless</em>
+                </button>
+                <button type="button" class="mode-card" data-run-mode="realmRush">
+                    <span class="mode-card-icon">⏱</span>
+                    <span><strong>Realm Rush</strong><small>Score and level up while racing through all six biomes in three minutes.</small></span>
+                    <em>3 minutes</em>
+                </button>
+                <button type="button" class="mode-card" data-run-mode="oneTank">
+                    <span class="mode-card-icon">🛡</span>
+                    <span><strong>One-Tank Challenge</strong><small>Adventure rules with permanent stat upgrades disabled. Temporary upgrades remain.</small></span>
+                    <em>Equal base stats</em>
+                </button>
+                <button type="button" class="mode-card" id="btn-practice-setup">
+                    <span class="mode-card-icon">🧪</span>
+                    <span><strong>Custom Practice</strong><small>Choose a biome, starting level, and allowed enemies. Permanent rewards are disabled.</small></span>
+                    <em>Custom setup</em>
+                </button>
+            </div>
+            <button type="button" class="btn" id="btn-close-game-modes">Back to Menu</button>
+        </div>
+    </div>
+
+    <div id="practice-screen" class="screen hidden">
+        <div class="practice-panel">
+            <div class="tutorial-step-count">Reward-Free Training</div>
+            <h1>Custom Practice</h1>
+            <p>Practice never changes coins, records, mastery, achievements, or your saved run.</p>
+            <div class="practice-fields">
+                <label for="practice-biome">Starting biome</label>
+                <select id="practice-biome"></select>
+                <label for="practice-level">Starting level</label>
+                <input id="practice-level" type="number" min="1" max="30" step="1" value="1">
+                <fieldset>
+                    <legend>Allowed enemies</legend>
+                    <div id="practice-enemy-list" class="practice-enemy-list"></div>
+                </fieldset>
+                <div id="practice-error" role="alert" aria-live="polite"></div>
+            </div>
+            <button type="button" class="btn btn-modes" id="btn-start-practice">Start Practice</button>
+            <button type="button" class="btn" id="btn-close-practice">Back to Modes</button>
+        </div>
+    </div>
 
     <div id="daily-screen" class="screen hidden">
         <div class="daily-panel">

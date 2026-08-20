@@ -438,6 +438,44 @@
             white-space: nowrap;
         }
 
+        #mode-hud {
+            position: fixed;
+            top: 132px;
+            left: 50%;
+            z-index: 15;
+            display: none;
+            align-items: center;
+            gap: 8px;
+            max-width: min(88vw, 430px);
+            padding: 7px 13px;
+            border: 1px solid rgba(167,139,250,0.28);
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(76,29,149,0.82), rgba(30,64,175,0.78));
+            color: #fff;
+            font-size: 11px;
+            pointer-events: none;
+            transform: translateX(-50%);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 6px 22px rgba(76,29,149,0.28);
+            white-space: nowrap;
+        }
+
+        #mode-hud.show {
+            display: flex;
+        }
+
+        #mode-hud strong {
+            color: #ddd6fe;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        #mode-hud-status {
+            overflow: hidden;
+            color: rgba(255,255,255,0.78);
+            text-overflow: ellipsis;
+        }
+
         #combo-indicator {
             position: fixed;
             top: 138px;
@@ -460,6 +498,15 @@
         #combo-indicator.show {
             opacity: 1;
             transform: translateX(-50%) scale(1);
+        }
+
+        body.mode-hud-visible #combo-indicator {
+            top: 170px;
+        }
+
+        body.mode-hud-visible #objective-hud,
+        body.mode-hud-visible #boss-hud {
+            top: 206px;
         }
 
         #objective-hud {
@@ -652,6 +699,13 @@
             box-shadow: 0 10px 40px rgba(245,158,11,0.3);
         }
 
+        .btn-modes {
+            background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+            box-shadow: 0 10px 40px rgba(124,58,237,0.32);
+        }
+
+        #game-modes-screen,
+        #practice-screen,
         #daily-screen,
         #achievements-screen,
         #garage-screen {
@@ -659,6 +713,8 @@
             justify-content: flex-start;
         }
 
+        .modes-panel,
+        .practice-panel,
         .daily-panel,
         .achievements-panel,
         .garage-panel {
@@ -749,6 +805,163 @@
             color: rgba(255,255,255,0.55);
             font-size: 10px;
             line-height: 1.4;
+        }
+
+        .modes-panel,
+        .practice-panel {
+            color: #fff;
+            text-align: center;
+        }
+
+        .modes-panel h1,
+        .practice-panel h1 {
+            margin-top: 4px;
+            font-size: clamp(1.7rem, 8vw, 2.35rem);
+            letter-spacing: 3px;
+        }
+
+        .modes-intro,
+        .practice-panel > p {
+            margin: 7px auto 14px;
+            max-width: 520px;
+            color: rgba(255,255,255,0.6);
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .mode-card-list {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+
+        .mode-card {
+            display: grid;
+            grid-template-columns: 38px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 11px 12px;
+            border: 1px solid rgba(167,139,250,0.2);
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(124,58,237,0.16), rgba(37,99,235,0.1));
+            color: #fff;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .mode-card:active,
+        .mode-card:hover {
+            border-color: rgba(167,139,250,0.58);
+            background: linear-gradient(135deg, rgba(124,58,237,0.3), rgba(37,99,235,0.2));
+        }
+
+        .mode-card-icon {
+            font-size: 25px;
+            text-align: center;
+        }
+
+        .mode-card strong,
+        .mode-card small {
+            display: block;
+        }
+
+        .mode-card strong {
+            font-size: 13px;
+            letter-spacing: 0.5px;
+        }
+
+        .mode-card small {
+            margin-top: 3px;
+            color: rgba(255,255,255,0.58);
+            font-size: 10px;
+            line-height: 1.35;
+        }
+
+        .mode-card em {
+            color: #c4b5fd;
+            font-size: 9px;
+            font-style: normal;
+            font-weight: 700;
+            text-align: right;
+            text-transform: uppercase;
+        }
+
+        #game-modes-screen .btn,
+        #practice-screen .btn {
+            display: block;
+            margin: 13px auto 0;
+        }
+
+        .practice-fields {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 12px;
+            text-align: left;
+        }
+
+        .practice-fields label,
+        .practice-fields legend {
+            color: rgba(255,255,255,0.7);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .practice-fields select,
+        .practice-fields input {
+            width: 100%;
+            min-height: 42px;
+            padding: 8px 10px;
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 12px;
+            background: rgba(0,0,0,0.34);
+            color: #fff;
+            font: inherit;
+        }
+
+        .practice-fields fieldset {
+            grid-column: 1 / -1;
+            padding: 10px;
+            border: 1px solid rgba(255,255,255,0.11);
+            border-radius: 14px;
+        }
+
+        .practice-fields legend {
+            padding: 0 6px;
+        }
+
+        .practice-enemy-list {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 6px;
+        }
+
+        .practice-enemy-option {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            min-height: 30px;
+            padding: 5px 7px;
+            border-radius: 9px;
+            background: rgba(255,255,255,0.06);
+            color: rgba(255,255,255,0.76);
+            font-size: 9px;
+        }
+
+        .practice-enemy-option input {
+            width: 14px;
+            min-height: 14px;
+            accent-color: #8b5cf6;
+        }
+
+        #practice-error {
+            grid-column: 1 / -1;
+            min-height: 14px;
+            color: #fca5a5;
+            font-size: 10px;
+            text-align: center;
         }
 
         .achievements-list {
@@ -1305,6 +1518,13 @@
                 white-space: nowrap;
             }
 
+            #mode-hud {
+                top: calc(max(8px, env(safe-area-inset-top)) + 150px);
+                max-width: 90vw;
+                padding: 6px 10px;
+                font-size: 9px;
+            }
+
             #combo-indicator {
                 top: calc(max(8px, env(safe-area-inset-top)) + 150px);
                 max-width: 86vw;
@@ -1319,11 +1539,22 @@
                 width: min(90vw, 430px);
             }
 
+            body.mode-hud-visible #combo-indicator {
+                top: calc(max(8px, env(safe-area-inset-top)) + 182px);
+            }
+
+            body.mode-hud-visible #objective-hud,
+            body.mode-hud-visible #boss-hud {
+                top: calc(max(8px, env(safe-area-inset-top)) + 214px);
+            }
+
             .hud-primary-row {
                 gap: 3px;
                 font-size: 9px;
             }
 
+            .modes-panel,
+            .practice-panel,
             .daily-panel,
             .achievements-panel,
             .garage-panel {
@@ -1469,6 +1700,19 @@
         }
 
         @media (orientation: portrait) and (max-height: 680px) {
+            #mode-hud {
+                top: calc(max(6px, env(safe-area-inset-top)) + 122px);
+            }
+
+            body.mode-hud-visible #combo-indicator {
+                top: calc(max(6px, env(safe-area-inset-top)) + 152px);
+            }
+
+            body.mode-hud-visible #objective-hud,
+            body.mode-hud-visible #boss-hud {
+                top: calc(max(6px, env(safe-area-inset-top)) + 180px);
+            }
+
             .game-info {
                 margin-top: 16px;
                 font-size: 11px;
