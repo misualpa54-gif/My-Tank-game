@@ -179,4 +179,14 @@ git diff --check
 npm run android:sync
 ```
 
-The cloud workflow builds the Java 21 Android debug APK after the stabilization commit is pushed.
+## Phase 16 Android artifact
+
+The Java 21 cloud build, Android unit-test task, debug assembly, and artifact upload all succeeded.
+
+- Workflow run: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32344726596`
+- APK artifact: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32344726596/artifacts/9397643945`
+- Artifact name: `TankRealms-debug-apk`
+- Download: ZIP containing `app-debug.apk`
+- Artifact archive size: 3,788,539 bytes (approximately 3.79 MB)
+- GitHub artifact archive SHA-256: `5d7662491632248997ac785deef859efd410e087294b7554a5b3051658ae5bb2`
+- Expiration: 19 September 2026

@@ -1695,15 +1695,15 @@ Coverage includes:
 
 Current dependency audit: **0 known vulnerabilities**.
 
-Latest successful Phase 15 Android workflow:
+Latest successful Phase 16 Android workflow:
 
-`https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32336394050`
+`https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32344726596`
 
-Phase 15 artifact:
+Phase 16 artifact:
 
-`https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32336394050/artifacts/9394846025`
+`https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32344726596/artifacts/9397643945`
 
-The artifact is a ZIP containing `app-debug.apk` and expires on 19 September 2026.
+The approximately 3.79 MB artifact is a ZIP containing `app-debug.apk` and expires on 19 September 2026. GitHub reports archive SHA-256 `5d7662491632248997ac785deef859efd410e087294b7554a5b3051658ae5bb2`.
 
 ---
 
