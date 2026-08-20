@@ -282,6 +282,9 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(state.cameraMode, 'follow');
     assert.equal(state.controlAssist, false);
     assert.equal(harness.intervals.length, 0);
+    assert.equal(window.document.body.classList.contains('app-ready'), true);
+    assert.ok(document.getElementById('app-loading'));
+    assert.ok(document.getElementById('startup-error'));
     assert.equal(api.renderer().pixelRatio, 1);
     assert.equal(harness.animationFrames.length, 1);
   });
@@ -411,6 +414,19 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(document.getElementById('game-over-screen').classList.contains('hidden'), false);
     assert.equal(document.getElementById('btn-pause').classList.contains('show'), false);
     assert.equal(document.getElementById('hud-quickbar').classList.contains('show'), false);
+  });
+
+  await t.test('pauses safely if Android loses the WebGL graphics context', () => {
+    api.startGame();
+    const canvas = api.renderer().domElement;
+    canvas.dispatchEvent(new window.Event('webglcontextlost', { cancelable: true }));
+    assert.equal(api.state().gamePhase, 'paused');
+    assert.equal(document.body.classList.contains('graphics-context-lost'), true);
+    assert.match(document.getElementById('loading-status').textContent, /Graphics paused/);
+
+    canvas.dispatchEvent(new window.Event('webglcontextrestored'));
+    assert.equal(document.body.classList.contains('graphics-context-lost'), false);
+    assert.equal(document.body.classList.contains('app-ready'), true);
   });
 
   await t.test('pauses combat for three unique level-up choices', () => {
@@ -716,6 +732,14 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(window.TankRealmsApp.handleBackButton(), false);
   });
 
+  await t.test('ignores duplicate hidden menu actions after combat starts', () => {
+    api.startGame();
+    api.requestNewRun('bossHunt');
+    assert.equal(api.state().gameMode, 'adventure');
+    assert.equal(api.state().newRunConfirmOpen, false);
+    assert.equal(api.continueSavedRun(), false);
+  });
+
   await t.test('saves and resumes a living run from the menu', () => {
     api.startGame();
     api.state().score = 4321;
@@ -909,6 +933,31 @@ test('active guardian survives a complete page reload', () => {
     true
   );
   secondSession.dom.window.close();
+});
+
+test('guardian defeat clears surviving realm threats and hostile hazards', () => {
+  const harness = createHarness();
+  const { api, window } = harness;
+  api.startGame();
+  api.state().level = 3;
+  api.queueGuardianIfNeeded();
+  const boss = api.spawnPendingGuardian();
+  const extraEnemy = api.makeEnemy('soldier', 0, 18);
+  api.shoot(extraEnemy);
+  api.createArtilleryStrike(new window.THREE.Vector3(0, 0, 0));
+  api.createMine(new window.THREE.Vector3(0, 0, 0));
+  assert.ok(api.bullets().length > 0);
+  assert.equal(api.artilleryStrikes().length, 1);
+  assert.equal(api.mines().length, 1);
+
+  boss.takeDamage(1e9);
+  api.handleGuardianDefeat(boss);
+  assert.equal(api.enemies().filter(enemy => !enemy.isDead).length, 0);
+  assert.equal(api.artilleryStrikes().length, 0);
+  assert.equal(api.mines().length, 0);
+  api.updatePhysics(0.016);
+  assert.equal(api.bullets().length, 0);
+  harness.dom.window.close();
 });
 
 test('one saved realm objective is active at a time', () => {
@@ -1237,6 +1286,59 @@ test('run results summarize local balance statistics', () => {
   assert.equal(document.getElementById('result-upgrades').textContent, '3');
   assert.match(document.getElementById('result-record').textContent, /New best/);
   harness.dom.window.close();
+});
+
+test('results report records against the run-start baseline after autosave', () => {
+  const harness = createHarness();
+  harness.api.startGame();
+  harness.api.state().score = 5000;
+  harness.api.state().level = 8;
+  harness.api.saveActiveRun();
+  assert.equal(harness.api.profile().bestScore, 5000);
+  assert.equal(harness.api.profile().bestLevel, 8);
+
+  harness.api.endGame();
+  const recordText = harness.window.document.getElementById('result-record').textContent;
+  assert.match(recordText, /New best score/);
+  assert.match(recordText, /New best level/);
+  harness.dom.window.close();
+});
+
+test('run-start record baselines and enemy cooldowns survive Continue', () => {
+  const first = createHarness({
+    tank_realms_profile_v1: JSON.stringify({
+      version: 1,
+      bestScore: 100,
+      bestLevel: 2,
+      tutorialCompleted: true,
+      settings: {}
+    })
+  });
+  first.api.startGame();
+  first.api.state().score = 900;
+  first.api.state().level = 5;
+  const artillery = first.api.makeEnemy('artillery', 20, 20);
+  artillery.nextAbilityTime = 999;
+  first.api.saveActiveRun();
+  const savedProfile = first.window.localStorage.getItem('tank_realms_profile_v1');
+  const savedRun = first.window.localStorage.getItem('tank_realms_active_run_v1');
+  first.dom.window.close();
+
+  const second = createHarness({
+    tank_realms_profile_v1: savedProfile,
+    tank_realms_active_run_v1: savedRun
+  });
+  assert.equal(second.api.continueSavedRun(), true);
+  assert.equal(second.api.state().runStartBestScore, 100);
+  assert.equal(second.api.state().runStartBestLevel, 2);
+  second.api.updatePhysics(0.016);
+  assert.equal(second.api.artilleryStrikes().length, 0);
+  second.api.endGame();
+  assert.match(
+    second.window.document.getElementById('result-record').textContent,
+    /New best score/
+  );
+  second.dom.window.close();
 });
 
 test('tank mastery grows independently and unlocks cosmetic levels', () => {

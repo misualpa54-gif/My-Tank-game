@@ -17,6 +17,17 @@ Phases 1–14 provide the stable offline APK plus optimization, saving, economy,
 - Adventure and Daily behavior remains unchanged;
 - no internet, account, ads, real-money purchases, or network permission is added.
 
+Phase 16 is a stabilization package for the latest build:
+
+- visible offline loading, retry, and safe unfinished-run reset instead of a silent blank/frozen startup;
+- Android WebView cache protection so an updated APK cannot load stale hashed assets;
+- safe non-antialiased WebGL fallback plus context-loss pause/recovery;
+- short-screen main-menu scrolling without clipping the title or Continue button;
+- correct new-record messages even after autosave and Continue;
+- clean Guardian realm transitions without surviving enemies, bullets, mines, or artillery from the old realm;
+- saved strategic-enemy cooldowns, non-overlapping feedback timers, duplicate-tap guards, and reduced mode-HUD DOM work;
+- 68 automated tests with zero failures and zero known npm vulnerabilities.
+
 Detailed reports are in:
 
 - `docs/phase3-performance-report.md`
@@ -32,8 +43,10 @@ Detailed reports are in:
 - `docs/phase13-mastery-achievements-report.md`
 - `docs/phase14-offline-daily-challenge-report.md`
 - `docs/phase15-additional-game-modes-report.md`
+- `docs/phase16-stability-loading-report.md`
+- `docs/current-game-comprehensive-handoff.md`
 
-The approved gameplay roadmap is now complete through the additional game modes package. Final-release signing, app icon/splash replacement, and store work remain separate.
+The approved gameplay roadmap is complete and the first post-roadmap stabilization package is applied. Physical Android QA is next. Final-release signing, app icon/splash replacement, and store work remain separate.
 
 ## Project structure
 

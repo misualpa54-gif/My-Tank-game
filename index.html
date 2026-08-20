@@ -12,6 +12,24 @@
     <div id="damage-overlay"></div>
     <div id="heal-overlay"></div>
 
+    <div id="app-loading" role="status" aria-live="polite">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <strong>Loading Tank Realms</strong>
+        <span id="loading-status">Preparing the offline battlefield…</span>
+        <a class="loading-retry" href="./">Retry if loading is taking too long</a>
+    </div>
+
+    <div id="startup-error" class="hidden" role="alert" aria-live="assertive">
+        <div class="startup-error-panel">
+            <div class="startup-error-icon" aria-hidden="true">⚠</div>
+            <h1>Unable to Continue</h1>
+            <p>Tank Realms could not finish loading or safely continue. Retry first. If the problem continues, reset only the unfinished run—your Garage, coins, settings, mastery, and achievements will remain.</p>
+            <div id="startup-error-detail">Startup error</div>
+            <button type="button" class="btn" id="btn-reload-app">Retry Loading</button>
+            <button type="button" class="garage-action" id="btn-reset-run">Reset Unfinished Run</button>
+        </div>
+    </div>
+
     <div id="hud-layer">
         <div id="hud-top">
             <div class="hud-panel" id="hud-score-panel">
@@ -94,17 +112,19 @@
     </div>
 
     <div id="start-screen" class="screen">
-        <h1>⚔️ TANK REALMS</h1>
-        <h2>Conquer Every Biome</h2>
-        <button type="button" class="btn btn-continue" id="btn-continue">Continue Run</button>
-        <button type="button" class="btn btn-garage" id="btn-garage">Garage</button>
-        <button type="button" class="btn btn-achievements" id="btn-achievements">Achievements</button>
-        <button type="button" class="btn btn-daily" id="btn-daily">Daily Challenge</button>
-        <button type="button" class="btn btn-modes" id="btn-game-modes">Game Modes</button>
-        <button type="button" class="btn" id="btn-start">Start Adventure</button>
-        <div class="game-info">
-            Lower left: Move • Lower right: Hold to fire<br>
-            Level up to unlock new realms and abilities
+        <div class="start-menu-content">
+            <h1>⚔️ TANK REALMS</h1>
+            <h2>Conquer Every Biome</h2>
+            <button type="button" class="btn btn-continue" id="btn-continue">Continue Run</button>
+            <button type="button" class="btn btn-garage" id="btn-garage">Garage</button>
+            <button type="button" class="btn btn-achievements" id="btn-achievements">Achievements</button>
+            <button type="button" class="btn btn-daily" id="btn-daily">Daily Challenge</button>
+            <button type="button" class="btn btn-modes" id="btn-game-modes">Game Modes</button>
+            <button type="button" class="btn" id="btn-start">Start Adventure</button>
+            <div class="game-info">
+                Lower left: Move • Lower right: Hold to fire<br>
+                Level up to unlock new realms and abilities
+            </div>
         </div>
     </div>
 

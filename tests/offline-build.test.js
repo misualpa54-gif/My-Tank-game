@@ -21,6 +21,9 @@ test('production web build is self-contained for offline APK use', () => {
   const assetReferences = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
 
   assert.ok(assetReferences.length >= 2, 'built page should reference local JavaScript and CSS');
+  assert.match(html, /Loading Tank Realms/);
+  assert.match(html, /Unable to Continue/);
+  assert.match(html, /Reset Unfinished Run/);
   for (const reference of assetReferences) {
     assert.doesNotMatch(reference, /^(?:https?:)?\/\//, `external asset found: ${reference}`);
     const localPath = path.resolve(webRoot, reference.replace(/^\.\//, ''));
@@ -68,4 +71,6 @@ test('Android wrapper is portrait, Android 9+, fullscreen, and network-independe
   assert.match(appGradle, /applicationId "com\.thiltete\.tankrealms"/);
   assert.match(activity, /SYSTEM_UI_FLAG_IMMERSIVE_STICKY/);
   assert.match(activity, /FLAG_KEEP_SCREEN_ON/);
+  assert.match(activity, /WebSettings\.LOAD_NO_CACHE/);
+  assert.match(activity, /webView\.clearCache\(true\)/);
 });

@@ -12,8 +12,13 @@ test('portrait HUD has dedicated score, level, and health panels', () => {
   assert.match(html, /id="hud-score-panel"/);
   assert.match(html, /id="hud-level-panel"/);
   assert.match(html, /id="hud-health-panel"/);
+  assert.match(html, /class="start-menu-content"/);
+  assert.match(html, /id="app-loading"/);
+  assert.match(html, /id="startup-error"/);
   assert.match(html, /Lower left: Move • Lower right: Hold to fire/);
 
+  assert.match(css, /#start-screen\s*\{\s*justify-content: flex-start/);
+  assert.match(css, /\.start-menu-content/);
   assert.match(css, /@media \(orientation: portrait\)/);
   assert.match(css, /grid-template-columns: minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);
   assert.match(css, /#hud-score-panel/);

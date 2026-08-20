@@ -1,11 +1,12 @@
 # Tank Realms — Comprehensive Current-State Review and AI Handoff
 
-**Documentation date:** 20 August 2026  
-**Current gameplay milestone:** Phase 15 complete  
-**Repository:** `misualpa54-gif/My-Tank-game`  
-**Working/review branch:** `arena/01a01b73-my-tank-game`  
-**Gameplay commit represented by this document:** `eeed271f4bb25ad0bd5434b66d07517145426dc9`  
-**Current automated result:** 63 tests passing, 0 failures, 0 npm vulnerabilities  
+**Documentation date:** 20 August 2026<br>
+**Current gameplay milestone:** Phase 15 gameplay complete; Phase 16 loading/runtime stabilization applied<br>
+**Repository:** `misualpa54-gif/My-Tank-game`<br>
+**Working/review branch:** `arena/01a01b73-my-tank-game`<br>
+**Phase 15 gameplay baseline:** `eeed271f4bb25ad0bd5434b66d07517145426dc9`<br>
+**Current source:** latest commit on the working/review branch<br>
+**Current automated result:** 68 tests passing, 0 failures, 0 npm vulnerabilities<br>
 **Current Android status:** successful offline portrait debug APK build
 
 This document is intentionally detailed. It is meant to let another AI model, developer, designer, or reviewer understand the game without first reconstructing fifteen phases of conversation.
@@ -29,7 +30,7 @@ Tank Realms is no longer a simple prototype. It is currently a **feature-complet
 - selectable quality and accessibility settings;
 - an offline Android wrapper and successful debug APK.
 
-The gameplay roadmap is complete through Phase 15. The project is **not yet a final commercial release**. It still needs physical-device QA and, only after explicit approval, separate final-release work such as permanent signing, final icon and splash art, versioning, store artwork, and Play Store submission.
+The gameplay roadmap is complete through Phase 15. Phase 16 adds startup recovery, Android stale-cache protection, WebGL fallback/context recovery, short-screen menu protection, record/save fixes, clean Guardian transitions, restored enemy cooldowns, and UI timer/race protections. The project is **not yet a final commercial release**. It still needs physical-device QA and, only after explicit approval, separate final-release work such as permanent signing, final icon and splash art, versioning, store artwork, and Play Store submission.
 
 A useful status label is:
 
@@ -115,7 +116,8 @@ The native Android activity:
 - allows system bars to appear temporarily by edge swipe;
 - keeps the screen awake during play;
 - handles Android Back through the JavaScript bridge;
-- pauses/saves when the app moves into the background.
+- pauses/saves when the app moves into the background;
+- disables/clears only the WebView HTTP resource cache at launch to prevent stale APK assets, without clearing localStorage progression.
 
 ---
 
@@ -187,9 +189,11 @@ Special button colors:
 
 ### What appears at launch
 
-The Three.js renderer initializes immediately and loads the Enchanted Forest scene even before a run starts. No player tank or enemies are active on the main menu. The full-screen dark blurred menu sits over that rendered biome.
+A branded dark-blue loading screen with a violet/cyan spinner appears first while the local JavaScript and Enchanted Forest are prepared. If loading takes more than eight seconds, a plain local retry link becomes available even if the main bundle did not initialize. Once the first frame is ready, the loader fades away.
 
-The camera begins with a 60-degree perspective and an elevated angled view. The renderer uses ACES filmic tone mapping, shadows, and the currently selected quality preset.
+The Three.js renderer initializes and loads the Enchanted Forest scene before menu interaction. No player tank or enemies are active on the main menu. The full-screen dark blurred menu sits over that rendered biome.
+
+The camera begins with a 60-degree perspective and an elevated angled view. The renderer uses ACES filmic tone mapping, shadows, and the currently selected quality preset. It first requests antialiased high-performance WebGL; if a driver rejects that request, it retries with antialiasing disabled. Startup/runtime failures show an actionable recovery panel instead of leaving a silent blank screen. Reset Unfinished Run removes only the active-run key and preserves permanent progress.
 
 ### Exact main-menu hierarchy
 
@@ -1564,6 +1568,7 @@ Save version:
 ### Living active run stores
 
 - score and run stats;
+- best-score and best-level baselines captured at run start;
 - XP, level, next XP threshold;
 - current biome and realm progress;
 - mode ID and mode state;
@@ -1577,7 +1582,7 @@ Save version:
 - Guardian damage baseline;
 - combo count/timer;
 - player HP, position, rotation;
-- living enemy types, HP, positions, rotations;
+- living enemy types, HP, positions, rotations, and ability/heal readiness;
 - objective-target marker;
 - introduced enemy types;
 - pending upgrade choices.
@@ -1658,7 +1663,7 @@ The upgrade-choice dialog cannot be dismissed with Back because choosing is mand
 
 ## 27. Testing and known verification level
 
-Current automated suite: **63 passing tests**.
+Current automated suite: **68 passing tests**.
 
 Coverage includes:
 

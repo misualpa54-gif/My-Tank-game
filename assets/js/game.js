@@ -720,6 +720,8 @@
             modeState: createDefaultModeState('adventure'),
             practiceConfig: sanitizePracticeConfig(),
             runOutcome: 'defeat',
+            runStartBestScore: 0,
+            runStartBestLevel: 1,
             isDailyChallenge: false,
             dailyDateKey: '',
             dailySeed: 0,
@@ -747,6 +749,13 @@
         let audioCtx = null;
         let noiseBuffer = null;
         let lastHapticTime = -Infinity;
+        let upgradeNotificationTimer = null;
+        let enemyIntroTimer = null;
+        let bossWarningTimer = null;
+        let biomeIndicatorTimer = null;
+        let damageOverlayTimer = null;
+        let healOverlayTimer = null;
+        let lastModeHudSignature = '';
         const lastSoundTimes = new Map();
 
         // Three.js Globals
@@ -1610,6 +1619,18 @@
                             Math.PI * 2,
                             0
                         ),
+                        abilityReadyIn: clampSavedNumber(
+                            savedEnemy.abilityReadyIn,
+                            0,
+                            10,
+                            1
+                        ),
+                        healReadyIn: clampSavedNumber(
+                            savedEnemy.healReadyIn,
+                            0,
+                            2,
+                            1
+                        ),
                         objectiveTarget: savedEnemy.objectiveTarget === true
                     }];
                 })
@@ -1620,6 +1641,20 @@
                 alive: true,
                 savedAt: clampSavedNumber(savedRun.savedAt, 0, Number.MAX_SAFE_INTEGER, Date.now(), true),
                 score: clampSavedNumber(savedRun.score, 0, 1e12, 0, true),
+                runStartBestScore: clampSavedNumber(
+                    savedRun.runStartBestScore,
+                    0,
+                    1e12,
+                    profile.bestScore,
+                    true
+                ),
+                runStartBestLevel: clampSavedNumber(
+                    savedRun.runStartBestLevel,
+                    1,
+                    10000,
+                    profile.bestLevel,
+                    true
+                ),
                 runStats: safeRunStats,
                 xp: clampSavedNumber(savedRun.xp, 0, xpToNext - 1, 0),
                 level,
@@ -1712,6 +1747,8 @@
                 alive: player.hp > 0,
                 savedAt: Date.now(),
                 score: state.score,
+                runStartBestScore: state.runStartBestScore,
+                runStartBestLevel: state.runStartBestLevel,
                 runStats: {
                     ...state.runStats,
                     upgradeHistory: [...state.runStats.upgradeHistory]
@@ -1755,6 +1792,14 @@
                         z: enemy.mesh.position.z
                     },
                     rotationY: enemy.mesh.rotation.y,
+                    abilityReadyIn: Math.max(
+                        0,
+                        enemy.nextAbilityTime - clock.getElapsedTime()
+                    ),
+                    healReadyIn: Math.max(
+                        0,
+                        2 - (clock.getElapsedTime() - enemy.lastHealTime)
+                    ),
                     objectiveTarget: enemy.isObjectiveTarget === true
                 })),
                 enemiesIntroduced: [...state.enemiesIntroduced],
@@ -1802,13 +1847,44 @@
             camera.position.set(0, 22, 28);
             camera.lookAt(0, 0, 5);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            try {
+                renderer = new THREE.WebGLRenderer({
+                    antialias: true,
+                    alpha: false,
+                    powerPreference: 'high-performance'
+                });
+            } catch (primaryRendererError) {
+                console.warn('High-quality WebGL startup failed; retrying safe renderer.', primaryRendererError);
+                renderer = new THREE.WebGLRenderer({
+                    antialias: false,
+                    alpha: false,
+                    powerPreference: 'default'
+                });
+            }
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.shadowMap.enabled = true;
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
             renderer.toneMappingExposure = 1.0;
             applyQualitySettings();
             container.appendChild(renderer.domElement);
+            renderer.domElement.addEventListener('webglcontextlost', event => {
+                event.preventDefault();
+                document.body.classList.add('graphics-context-lost');
+                document.getElementById('app-loading')?.setAttribute('aria-hidden', 'false');
+                const loadingStatus = document.getElementById('loading-status');
+                if (loadingStatus) {
+                    loadingStatus.textContent = 'Graphics paused. Waiting for Android to restore the battlefield…';
+                }
+                if (state.gamePhase === 'playing') pauseGame();
+            });
+            renderer.domElement.addEventListener('webglcontextrestored', () => {
+                applyQualitySettings();
+                document.body.classList.remove('graphics-context-lost');
+                document.body.classList.add('app-ready');
+                document.getElementById('app-loading')?.setAttribute('aria-hidden', 'true');
+                const loadingStatus = document.getElementById('loading-status');
+                if (loadingStatus) loadingStatus.textContent = 'Battlefield restored.';
+            });
 
             clock = new THREE.Clock();
 
@@ -2316,7 +2392,11 @@
             const biomeEl = document.getElementById('biome-name');
             biomeEl.textContent = biome.name;
             biomeEl.classList.add('show');
-            setTimeout(() => biomeEl.classList.remove('show'), 3000);
+            if (biomeIndicatorTimer !== null) clearTimeout(biomeIndicatorTimer);
+            biomeIndicatorTimer = setTimeout(() => {
+                biomeEl.classList.remove('show');
+                biomeIndicatorTimer = null;
+            }, 3000);
 
             // Sky gradient
             const skyCanvas = document.createElement('canvas');
@@ -4138,10 +4218,6 @@
         function updateModeHUD() {
             const hud = document.getElementById('mode-hud');
             const visible = state.isPlaying && state.gameMode !== 'adventure';
-            hud.classList.toggle('show', visible);
-            document.body.classList.toggle('mode-hud-visible', visible);
-            if (!visible) return;
-
             const definition = getGameModeDefinition();
             let status = '';
             if (state.gameMode === 'daily') {
@@ -4163,11 +4239,19 @@
             } else if (state.gameMode === 'practice') {
                 status = `Level ${state.level} • Rewards disabled`;
             }
+
+            const signature = `${visible}|${definition.id}|${status}`;
+            if (signature === lastModeHudSignature) return;
+            lastModeHudSignature = signature;
+            hud.classList.toggle('show', visible);
+            document.body.classList.toggle('mode-hud-visible', visible);
+            if (!visible) return;
             document.getElementById('mode-hud-name').textContent = definition.name;
             document.getElementById('mode-hud-status').textContent = status;
         }
 
         function hideModeHUD() {
+            lastModeHudSignature = '';
             document.getElementById('mode-hud').classList.remove('show');
             document.body.classList.remove('mode-hud-visible');
         }
@@ -4253,6 +4337,7 @@
         }
 
         function requestNewRun(mode = 'adventure', practiceConfig = null) {
+            if (state.gamePhase !== 'menu' || state.newRunConfirmOpen) return;
             const safeMode = normalizeRunMode(mode);
             state.pendingNewRunMode = safeMode;
             if (safeMode === 'practice') {
@@ -4616,6 +4701,10 @@
         }
 
         function hideBossUI() {
+            if (bossWarningTimer !== null) {
+                clearTimeout(bossWarningTimer);
+                bossWarningTimer = null;
+            }
             document.getElementById('boss-hud').classList.remove('show');
             document.getElementById('boss-warning').classList.remove('show');
         }
@@ -4669,8 +4758,13 @@
             state.guardianPending = false;
 
             document.getElementById('boss-warning-name').textContent = data.name;
-            document.getElementById('boss-warning').classList.add('show');
-            setTimeout(() => document.getElementById('boss-warning').classList.remove('show'), 2200);
+            const warning = document.getElementById('boss-warning');
+            warning.classList.add('show');
+            if (bossWarningTimer !== null) clearTimeout(bossWarningTimer);
+            bossWarningTimer = setTimeout(() => {
+                warning.classList.remove('show');
+                bossWarningTimer = null;
+            }, 2200);
             updateBossHUD();
             playGameSound('bossWarning');
             triggerHaptic('heavy');
@@ -4726,6 +4820,22 @@
             updateBossHUD();
         }
 
+        function clearRealmTransitionThreats(defeatedBoss) {
+            const remainingEnemies = enemies.filter(enemy =>
+                enemy !== defeatedBoss && !enemy.isDead
+            );
+            removeAndDisposeObjects(remainingEnemies.map(enemy => enemy.mesh));
+            enemies = enemies.filter(enemy => enemy === defeatedBoss);
+            bullets.forEach(bullet => {
+                bullet.group.userData.disabled = true;
+            });
+            removeAndDisposeObjects(artilleryStrikes.map(strike => strike.mesh));
+            removeAndDisposeObjects(mines.map(mine => mine.mesh));
+            artilleryStrikes = [];
+            mines = [];
+            state.targetEnemy = null;
+        }
+
         function handleGuardianDefeat(boss) {
             if (!boss?.typeData?.isBoss || boss !== activeBoss) return 0;
             const bonusCoins = boss.typeData.bossCoins;
@@ -4735,13 +4845,9 @@
             state.guardianPending = false;
             activeBoss = null;
             hideBossUI();
+            clearRealmTransitionThreats(boss);
 
             if (state.gameMode === 'bossHunt') {
-                const clearedMinions = enemies.filter(enemy =>
-                    enemy !== boss && !enemy.isDead && !enemy.typeData?.isBoss
-                );
-                removeAndDisposeObjects(clearedMinions.map(enemy => enemy.mesh));
-                enemies = enemies.filter(enemy => !clearedMinions.includes(enemy));
                 state.modeState.guardianIndex++;
                 state.realmProgress = state.modeState.guardianIndex;
                 if (player && !player.isDead) {
@@ -4781,6 +4887,22 @@
         }
 
         function clearCombatScene() {
+            if (upgradeNotificationTimer !== null) clearTimeout(upgradeNotificationTimer);
+            if (enemyIntroTimer !== null) clearTimeout(enemyIntroTimer);
+            if (biomeIndicatorTimer !== null) clearTimeout(biomeIndicatorTimer);
+            if (damageOverlayTimer !== null) clearTimeout(damageOverlayTimer);
+            if (healOverlayTimer !== null) clearTimeout(healOverlayTimer);
+            upgradeNotificationTimer = null;
+            enemyIntroTimer = null;
+            biomeIndicatorTimer = null;
+            damageOverlayTimer = null;
+            healOverlayTimer = null;
+            document.getElementById('upgrade-notification').classList.remove('show');
+            document.getElementById('enemy-intro').classList.remove('show');
+            document.getElementById('biome-name').classList.remove('show');
+            document.getElementById('damage-overlay').style.opacity = '0';
+            document.getElementById('heal-overlay').style.opacity = '0';
+
             removeAndDisposeObjects([
                 player ? player.mesh : null,
                 ...enemies.map(enemy => enemy.mesh)
@@ -4831,6 +4953,8 @@
                 profile.dailyRecords[dailyDefinition.dateKey] = record;
                 saveProfile();
             }
+            state.runStartBestScore = profile.bestScore;
+            state.runStartBestLevel = profile.bestLevel;
             state.score = 0;
             state.runStats = createDefaultRunStats();
             state.xp = 0;
@@ -4912,6 +5036,7 @@
         }
 
         function continueSavedRun() {
+            if (state.gamePhase !== 'menu') return false;
             const savedRun = sanitizeActiveRun(cachedActiveRun);
             if (!savedRun) {
                 clearActiveRunSave();
@@ -4921,6 +5046,8 @@
             clearCombatScene();
             const now = clock.getElapsedTime();
             state.score = savedRun.score;
+            state.runStartBestScore = savedRun.runStartBestScore;
+            state.runStartBestLevel = savedRun.runStartBestLevel;
             state.runStats = { ...savedRun.runStats, upgradeHistory: [...savedRun.runStats.upgradeHistory] };
             state.xp = savedRun.xp;
             state.level = savedRun.level;
@@ -5002,6 +5129,8 @@
                     savedEnemy.position.z
                 );
                 enemy.mesh.rotation.y = savedEnemy.rotationY;
+                enemy.nextAbilityTime = now + savedEnemy.abilityReadyIn;
+                enemy.lastHealTime = now - (2 - savedEnemy.healReadyIn);
                 enemy.move(0, new THREE.Vector2(0, 0));
                 enemies.push(enemy);
                 if (enemy.typeData?.isBoss) {
@@ -5203,7 +5332,11 @@
             const notif = document.getElementById('upgrade-notification');
             document.getElementById('upgrade-text').textContent = text;
             notif.classList.add('show');
-            setTimeout(() => notif.classList.remove('show'), 2500);
+            if (upgradeNotificationTimer !== null) clearTimeout(upgradeNotificationTimer);
+            upgradeNotificationTimer = setTimeout(() => {
+                notif.classList.remove('show');
+                upgradeNotificationTimer = null;
+            }, 2500);
         }
 
         function showEnemyIntro(type) {
@@ -5215,7 +5348,11 @@
             document.getElementById('enemy-desc').textContent = data.desc;
             const intro = document.getElementById('enemy-intro');
             intro.classList.add('show');
-            setTimeout(() => intro.classList.remove('show'), 3000);
+            if (enemyIntroTimer !== null) clearTimeout(enemyIntroTimer);
+            enemyIntroTimer = setTimeout(() => {
+                intro.classList.remove('show');
+                enemyIntroTimer = null;
+            }, 3000);
         }
 
         function getComboMultiplier(comboCount) {
@@ -5366,9 +5503,13 @@
             playGameSound('damage');
             triggerHaptic('medium');
             createExplosion(impactPosition, 14, color, 'armor');
-            document.getElementById('damage-overlay').style.opacity =
-                String(0.5 * getFlashScale());
-            setTimeout(() => document.getElementById('damage-overlay').style.opacity = '0', 150);
+            const damageOverlay = document.getElementById('damage-overlay');
+            damageOverlay.style.opacity = String(0.5 * getFlashScale());
+            if (damageOverlayTimer !== null) clearTimeout(damageOverlayTimer);
+            damageOverlayTimer = setTimeout(() => {
+                damageOverlay.style.opacity = '0';
+                damageOverlayTimer = null;
+            }, 150);
             updateHUD();
             if (player.hp <= 0) endGame();
         }
@@ -5562,8 +5703,13 @@
             if (state.playerStats.regen > 0 && clock.getElapsedTime() - state.lastRegenTime > 1) {
                 if (player.hp < player.maxHp) {
                     player.hp = Math.min(player.maxHp, player.hp + state.playerStats.regen);
-                    document.getElementById('heal-overlay').style.opacity = String(0.3 * getFlashScale());
-                    setTimeout(() => document.getElementById('heal-overlay').style.opacity = '0', 200);
+                    const healOverlay = document.getElementById('heal-overlay');
+                    healOverlay.style.opacity = String(0.3 * getFlashScale());
+                    if (healOverlayTimer !== null) clearTimeout(healOverlayTimer);
+                    healOverlayTimer = setTimeout(() => {
+                        healOverlay.style.opacity = '0';
+                        healOverlayTimer = null;
+                    }, 200);
                     updateHUD();
                 }
                 state.lastRegenTime = clock.getElapsedTime();
@@ -5662,6 +5808,10 @@
             // Bullets
             for (let i = bullets.length - 1; i >= 0; i--) {
                 const b = bullets[i];
+                if (b.group.userData.disabled) {
+                    releaseBulletAt(i);
+                    continue;
+                }
                 if (b.group.userData.isPlayer && b.group.userData.homing > 0) {
                     let homingTarget = null;
                     let homingDistance = Infinity;
@@ -6031,8 +6181,8 @@
 
         function renderRunResults() {
             const awardsProgress = doesCurrentModeAwardProgress();
-            const isScoreRecord = awardsProgress && state.score > profile.bestScore;
-            const isLevelRecord = awardsProgress && state.level > profile.bestLevel;
+            const isScoreRecord = awardsProgress && state.score > state.runStartBestScore;
+            const isLevelRecord = awardsProgress && state.level > state.runStartBestLevel;
             document.getElementById('result-mode').textContent = getGameModeDefinition().name;
             const resultTitle = document.getElementById('result-title');
             if (state.runOutcome === 'victory') resultTitle.textContent = '🏆 Hunt Complete';
@@ -6578,3 +6728,7 @@
         init();
         updateHUD();
         updateComboIndicator();
+        document.body.classList.add('app-ready');
+        document.getElementById('app-loading')?.setAttribute('aria-hidden', 'true');
+        const loadingStatus = document.getElementById('loading-status');
+        if (loadingStatus) loadingStatus.textContent = 'Ready';
