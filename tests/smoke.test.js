@@ -84,13 +84,20 @@ function createHarness(storageSeed = {}) {
 
   const animationFrames = [];
   const intervals = [];
+  const timeouts = [];
   window.requestAnimationFrame = (callback) => {
     animationFrames.push(callback);
     return animationFrames.length;
   };
   window.cancelAnimationFrame = () => {};
-  window.setTimeout = () => 1;
-  window.clearTimeout = () => {};
+  window.setTimeout = (callback, delay = 0) => {
+    const entry = { callback, delay, cleared: false };
+    timeouts.push(entry);
+    return timeouts.length;
+  };
+  window.clearTimeout = (id) => {
+    if (timeouts[id - 1]) timeouts[id - 1].cleared = true;
+  };
   window.setInterval = (callback, delay) => {
     intervals.push({ callback, delay });
     return intervals.length;
@@ -278,7 +285,14 @@ function createHarness(storageSeed = {}) {
   `;
 
   window.eval(`${gameSource}\n${testApi}`);
-  return { dom, window, api: window.__tankTest, animationFrames, intervals };
+  return {
+    dom,
+    window,
+    api: window.__tankTest,
+    animationFrames,
+    intervals,
+    timeouts
+  };
 }
 
 test('Tank Realms stabilized runtime smoke test', async (t) => {
@@ -324,15 +338,23 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     const ambientBatch = api.environmentParticleBatches()[0];
     const mediumAmbientCount = ambientBatch.count;
     assert.ok(mediumAmbientCount < ambientBatch.userData.fullInstanceCount);
+    assert.equal(api.renderer().shadowMap.enabled, true);
+    const mediumBullet = api.acquireBulletVisual(0x00ffff);
+    assert.equal(mediumBullet.light.visible, false);
+    api.releaseBulletVisual(mediumBullet);
 
     api.toggleQualityMode();
     assert.equal(api.state().qualityMode, 'high');
     assert.equal(api.renderer().pixelRatio, 1.25);
     assert.equal(ambientBatch.count, ambientBatch.userData.fullInstanceCount);
+    const highBullet = api.acquireBulletVisual(0x00ffff);
+    assert.equal(highBullet.light.visible, true);
+    api.releaseBulletVisual(highBullet);
 
     api.toggleQualityMode();
     assert.equal(api.state().qualityMode, 'low');
     assert.equal(api.renderer().pixelRatio, 0.8);
+    assert.equal(api.renderer().shadowMap.enabled, false);
     assert.ok(ambientBatch.count < mediumAmbientCount);
     assert.equal(api.environmentColliders().length, colliderCount);
     assert.equal(api.getQualityAdjustedCount(10), 5);
@@ -1365,6 +1387,26 @@ test('Custom Practice honors setup and cannot change permanent progress or a sav
     window.document.getElementById('result-record').textContent,
     /not saved/
   );
+  harness.dom.window.close();
+});
+
+test('home run buttons paint loading feedback before world construction', () => {
+  const harness = createHarness();
+  harness.api.requestNewRun('adventure');
+  assert.equal(harness.api.state().gamePhase, 'menu');
+  assert.equal(harness.window.document.body.classList.contains('run-loading'), true);
+  assert.match(
+    harness.window.document.getElementById('loading-status').textContent,
+    /Preparing Adventure/
+  );
+  const scheduledStart = [...harness.timeouts]
+    .reverse()
+    .find(entry => entry.delay === 40 && !entry.cleared);
+  assert.ok(scheduledStart);
+  scheduledStart.callback();
+  assert.equal(harness.api.state().gamePhase, 'playing');
+  assert.equal(harness.window.document.body.classList.contains('run-loading'), false);
+  assert.ok(harness.api.worldChunks().size >= 9);
   harness.dom.window.close();
 });
 

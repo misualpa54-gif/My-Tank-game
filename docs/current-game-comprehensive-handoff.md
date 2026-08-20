@@ -6,7 +6,7 @@
 **Working/review branch:** `arena/01a01b73-my-tank-game`<br>
 **Phase 15 gameplay baseline:** `eeed271f4bb25ad0bd5434b66d07517145426dc9`<br>
 **Current source:** latest commit on the working/review branch<br>
-**Current automated result:** 72 tests passing, 0 failures, 0 npm vulnerabilities<br>
+**Current automated result:** 73 tests passing, 0 failures, 0 npm vulnerabilities<br>
 **Current Android status:** successful offline portrait debug APK build
 
 This document is intentionally detailed. It is meant to let another AI model, developer, designer, or reviewer understand the game without first reconstructing fifteen phases of conversation.
@@ -1045,7 +1045,7 @@ This is the initial menu background and normal starting Adventure biome.
 
 ### Environmental behavior
 
-- Terrain is analytic at every coordinate and rendered through pooled 48-unit ground tiles.
+- Terrain is analytic at every coordinate and rendered through one continuous player-centered ground surface over 48-unit streamed chunks.
 - The run seed, chunk coordinates, and realm deterministically regenerate cover/scenery.
 - Gameplay chunks stream in a 5×5 neighborhood; High adds a decorative outer ring.
 - Tanks sample terrain height and normals continuously at any world position.
@@ -1460,8 +1460,8 @@ Quality is manually selected. There is no silent automatic quality switching.
 
 | Preset | Pixel ratio cap | Shadow type | Shadow map | Background detail | Ambient particles | Effect particles | Optional lights |
 |---|---:|---|---:|---:|---:|---:|---|
-| Low | 0.8 | BasicShadowMap | 512 | 35% | 35% | 50% | Off |
-| Medium | 1.0 | PCFShadowMap | 1024 | 65% | 67% | 75% | On |
+| Low | 0.8 | Shadows Off | — | 35% | 35% | 50% | Off |
+| Medium | 1.0 | PCFShadowMap | 512 | 65% | 67% | 75% | Off |
 | High | 1.25 | PCFSoftShadowMap | 1024 | 100% | 100% | 100% | On |
 
 ### Scene optimization
@@ -1650,7 +1650,7 @@ The upgrade-choice dialog cannot be dismissed with Back because choosing is mand
 
 ## 27. Testing and known verification level
 
-Current automated suite: **72 passing tests**.
+Current automated suite: **73 passing tests**.
 
 Coverage includes:
 

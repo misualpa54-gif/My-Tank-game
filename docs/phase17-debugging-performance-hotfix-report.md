@@ -58,13 +58,14 @@ The first-run tutorial could pause the newly loaded game immediately and added a
 - High's decorative ring also fills progressively.
 - Old/retained chunks remain visible during movement.
 
-### Shared world resources
+### Shared world resources and chunk-build cleanup
 
 - Chunk instances now share one cached geometry/material set per active realm for trunks, foliage, cactus, rocks, grass, crystals, spikes, water, lava, and ground material.
 - Chunk disposal skips shared resources.
 - Realm cleanup disposes the shared cache once.
 - Quality changes safely rebuild only what their geometry resolution requires.
-- Per-chunk global quality traversal was removed from the build path.
+- Removed an accidentally retained global `applySceneQualityVisibility()` traversal from every single chunk commit. Grass receives its quality count when the chunk is created, avoiding O(chunk²) streaming work.
+- Shared water geometry and lava materials animate once per frame rather than repeating identical vertex/material work for every pool.
 
 ### Continuous ground surface
 
@@ -105,11 +106,17 @@ Duplicate taps are ignored while loading.
 - Menu chunk completion requests a render only when a new chunk commits.
 - Resize, quality, realm, and WebGL restore mark the scene dirty.
 
-### Upgrade overlay composition
+### Upgrade/menu composition and hot-path work
 
 - Removed double `backdrop-filter` blur from the level-up overlay.
+- Upgrade fade reduced to 0.14s and no longer performs the hidden scale transform.
+- General screen transitions reduced from 0.6s to 0.22s so button navigation feels responsive.
+- Main screen blur reduced from 20px to 10px.
 - Retained the dark glass/purple card identity with a solid translucent battlefield dim.
 - Frozen gameplay no longer burns GPU frames behind the cards.
+- Reused tank movement, aim, camera, homing, collision-query, water, and lava scratch objects instead of allocating them repeatedly in hot update loops.
+- World chunk requests now run only after the player crosses a chunk anchor, not every rendered frame.
+- Low disables shadows completely; Medium uses a 512 PCF shadow map with optional point lights disabled; full 1024 soft shadows/lights remain High-only.
 
 ### Complete tutorial removal
 
@@ -149,7 +156,7 @@ The rest of the 5×5 world streams after first paint rather than blocking menu i
 
 ## Verification
 
-- 72 automated tests pass.
+- 73 automated tests pass.
 - 0 failures.
 - 0 npm vulnerabilities.
 - JavaScript lint passes without warnings.
@@ -161,7 +168,7 @@ The rest of the 5×5 world streams after first paint rather than blocking menu i
 
 ## Debugged Android artifact
 
-The Java 21 workflow, full 72-test check, Android unit-test task, debug assembly, and upload succeeded.
+The Java 21 workflow, full 73-test check, Android unit-test task, debug assembly, and upload succeeded.
 
 - Workflow: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32415329178`
 - APK artifact: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32415329178/artifacts/9423715723`

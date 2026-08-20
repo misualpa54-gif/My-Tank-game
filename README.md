@@ -27,7 +27,7 @@ Phase 17 debugging hotfix follows real-player feedback:
 - static menu/pause/upgrade screens stop continuously rendering the 3D world;
 - level-up overlay no longer uses expensive double backdrop blur;
 - synthetic 50-restart and 30-biome stress time reduced by roughly 60–70%;
-- 72 automated tests pass with zero failures.
+- 73 automated tests pass with zero failures.
 
 Phase 17 introduced the approved infinite-world foundation:
 
@@ -41,7 +41,7 @@ Phase 17 introduced the approved infinite-world foundation:
 - local objective anchors for marked targets and beacon defense;
 - world seed/coordinates/objective anchors/recent destruction scaffold saved through Continue;
 - Ricochet migrated from walls to hard rocks/crystal pillars;
-- 72 automated tests with zero failures.
+- 73 automated tests with zero failures.
 
 Phase 16 is the preceding stabilization package:
 

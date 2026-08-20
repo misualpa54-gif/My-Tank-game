@@ -352,17 +352,19 @@
                 backgroundDecorationRatio: 0.35,
                 ambientParticleRatio: 0.35,
                 effectParticleRatio: 0.5,
-                dynamicLights: false
+                dynamicLights: false,
+                shadowsEnabled: false
             },
             medium: {
                 label: 'Medium',
                 maxPixelRatio: 1,
                 shadowType: THREE.PCFShadowMap,
-                shadowMapSize: 1024,
+                shadowMapSize: 512,
                 backgroundDecorationRatio: 0.65,
                 ambientParticleRatio: 0.67,
                 effectParticleRatio: 0.75,
-                dynamicLights: true
+                dynamicLights: false,
+                shadowsEnabled: true
             },
             high: {
                 label: 'High',
@@ -372,7 +374,8 @@
                 backgroundDecorationRatio: 1,
                 ambientParticleRatio: 1,
                 effectParticleRatio: 1,
-                dynamicLights: true
+                dynamicLights: true,
+                shadowsEnabled: true
             }
         };
         const QUALITY_ORDER = ['low', 'medium', 'high'];
@@ -782,6 +785,17 @@
         const MAX_POOLED_BULLETS = 128;
         const environmentParticleTransform = new THREE.Object3D();
         const bulletImpactPosition = new THREE.Vector3();
+        const enemyToPlayerScratch = new THREE.Vector3();
+        const cameraOffsetScratch = new THREE.Vector3();
+        const cameraTargetScratch = new THREE.Vector3();
+        const aimTargetScratch = new THREE.Vector3();
+        const homingVelocityScratch = new THREE.Vector3();
+        const worldAvoidanceScratch = new THREE.Vector2();
+        const worldAvoidanceDirectionScratch = new THREE.Vector2();
+        const worldLookAheadScratch = new THREE.Vector3();
+        const lavaMaterialScratchSet = new Set();
+        const waterGeometryScratchSet = new Set();
+        const nearbyCollidersScratch = [];
 
         function collectObjectResources(object, geometries, materials, textures) {
             if (!object || typeof object.traverse !== 'function') return;
@@ -933,7 +947,7 @@
                 renderer.setPixelRatio(
                     Math.min(window.devicePixelRatio || 1, preset.maxPixelRatio)
                 );
-                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.enabled = preset.shadowsEnabled;
                 renderer.shadowMap.type = preset.shadowType;
             }
             if (dirLight) {
@@ -2612,7 +2626,15 @@
             mesh.receiveShadow = category !== 'grass';
             mesh.frustumCulled = false;
             mesh.userData.fullInstanceCount = matrices.length;
-            if (category === 'grass') mesh.userData.qualityCategory = 'background-decoration';
+            if (category === 'grass') {
+                mesh.userData.qualityCategory = 'background-decoration';
+                mesh.count = Math.max(
+                    1,
+                    Math.round(
+                        matrices.length * getQualityPreset().backgroundDecorationRatio
+                    )
+                );
+            }
             return mesh;
         }
 
@@ -2901,7 +2923,6 @@
             environmentObjects.push(root);
             worldChunks.set(key, chunk);
             worldColliderGrid.set(key, chunk.colliders);
-            applySceneQualityVisibility();
             return chunk;
         }
 
@@ -2995,21 +3016,32 @@
             const maxChunkX = getWorldChunkCoordinate(Math.max(start.x, end.x)) + 1;
             const minChunkZ = getWorldChunkCoordinate(Math.min(start.z, end.z)) - 1;
             const maxChunkZ = getWorldChunkCoordinate(Math.max(start.z, end.z)) + 1;
-            const nearby = [];
+            nearbyCollidersScratch.length = 0;
             for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
                 for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
                     const colliders = worldColliderGrid.get(getWorldChunkKey(chunkX, chunkZ));
-                    if (colliders) nearby.push(...colliders);
+                    if (colliders) nearbyCollidersScratch.push(...colliders);
                 }
             }
-            return nearby;
+            return nearbyCollidersScratch;
         }
 
         function updateInfiniteWorld() {
             if (!player) return;
             const biome = BIOMES[state.currentBiome] || BIOMES[0];
-            repositionInfiniteGround(biome, player.mesh.position.x, player.mesh.position.z);
-            requestWorldChunks(player.mesh.position.x, player.mesh.position.z, biome, false);
+            const anchorChanged = repositionInfiniteGround(
+                biome,
+                player.mesh.position.x,
+                player.mesh.position.z
+            );
+            if (anchorChanged) {
+                requestWorldChunks(
+                    player.mesh.position.x,
+                    player.mesh.position.z,
+                    biome,
+                    false
+                );
+            }
             runWorldChunkTasks(biome);
         }
 
@@ -3253,11 +3285,16 @@
 
         function getEnemyAvoidanceInput(tank, inputVec) {
             if (tank.isPlayer || inputVec.lengthSq() < 0.01) return inputVec;
-            const desired = new THREE.Vector2(inputVec.x, inputVec.y).normalize();
-            const lookAhead = tank.mesh.position.clone().add(
-                new THREE.Vector3(desired.x, 0, desired.y).multiplyScalar(4.5)
-            );
-            const avoidance = new THREE.Vector2();
+            const desired = worldAvoidanceDirectionScratch
+                .set(inputVec.x, inputVec.y)
+                .normalize();
+            const lookAhead = worldLookAheadScratch
+                .copy(tank.mesh.position)
+                .addScaledVector(
+                    enemyToPlayerScratch.set(desired.x, 0, desired.y),
+                    4.5
+                );
+            const avoidance = worldAvoidanceScratch.set(0, 0);
             getNearbyEnvironmentColliders(tank.mesh.position, lookAhead).forEach(collider => {
                 const dx = lookAhead.x - collider.position.x;
                 const dz = lookAhead.z - collider.position.z;
@@ -3304,6 +3341,14 @@
                 // Physics-based animation properties
                 this.velocity = new THREE.Vector3();
                 this.acceleration = new THREE.Vector3();
+                this._previousVelocity = new THREE.Vector3();
+                this._moveDirection = new THREE.Vector3();
+                this._velocityDelta = new THREE.Vector3();
+                this._displacement = new THREE.Vector3();
+                this._nextPosition = new THREE.Vector3();
+                this._terrainNormal = new THREE.Vector3();
+                this._aimWorld = new THREE.Vector3();
+                this._aimDirection = new THREE.Vector3();
                 this.targetTilt = new THREE.Vector2(0, 0);
                 this.currentTilt = new THREE.Vector2(0, 0);
                 this.bobPhase = Math.random() * Math.PI * 2;
@@ -3656,7 +3701,7 @@
                 if (this.isDead) return;
 
                 // Calculate acceleration for tilt animation
-                const prevVel = this.velocity.clone();
+                const prevVel = this._previousVelocity.copy(this.velocity);
 
                 const effectiveInput = this.isPlayer
                     ? inputVec
@@ -3676,26 +3721,30 @@
                     // Store velocity in world units per second. Integrate the
                     // original 60 FPS smoothing curve over the full time step so
                     // 30, 60, and 120 FPS travel the same distance.
-                    const move = new THREE.Vector3(
-                        effectiveInput.x,
-                        0,
-                        effectiveInput.y
-                    ).normalize().multiplyScalar(speed);
+                    const move = this._moveDirection
+                        .set(effectiveInput.x, 0, effectiveInput.y)
+                        .normalize()
+                        .multiplyScalar(speed);
                     const frameCount = dt * BASELINE_FPS;
                     const retentionAt60Fps = 0.85;
                     const retainedVelocity = Math.pow(retentionAt60Fps, frameCount);
-                    const displacement = move.clone().multiplyScalar(frameCount);
-                    displacement.add(
-                        prevVel.clone().sub(move).multiplyScalar(
-                            retentionAt60Fps * (1 - retainedVelocity) / (1 - retentionAt60Fps)
+                    const velocityDelta = this._velocityDelta.copy(prevVel).sub(move);
+                    const displacement = this._displacement
+                        .copy(move)
+                        .multiplyScalar(frameCount)
+                        .addScaledVector(
+                            velocityDelta,
+                            retentionAt60Fps * (1 - retainedVelocity) /
+                                (1 - retentionAt60Fps)
                         )
-                    );
-                    displacement.multiplyScalar(1 / BASELINE_FPS);
-                    this.velocity.copy(move).add(
-                        prevVel.clone().sub(move).multiplyScalar(retainedVelocity)
-                    );
+                        .multiplyScalar(1 / BASELINE_FPS);
+                    this.velocity
+                        .copy(move)
+                        .addScaledVector(velocityDelta, retainedVelocity);
 
-                    let nextPos = this.mesh.position.clone().add(displacement);
+                    let nextPos = this._nextPosition
+                        .copy(this.mesh.position)
+                        .add(displacement);
                     if (this.isPlayer) {
                         nextPos = resolvePlayerWorldMovement(this.mesh.position, nextPos);
                     }
@@ -3734,7 +3783,11 @@
                 this.mesh.position.y = terrainY + 0.1; // Slight offset above ground
 
                 // Apply terrain normal for realistic tilt
-                const normal = getTerrainNormal(this.mesh.position.x, this.mesh.position.z);
+                const normal = getTerrainNormal(
+                    this.mesh.position.x,
+                    this.mesh.position.z,
+                    this._terrainNormal
+                );
                 this.targetTilt.x += Math.atan2(normal.x, normal.y) * 0.5;
                 this.targetTilt.y += Math.atan2(normal.z, normal.y) * 0.5;
 
@@ -3752,9 +3805,13 @@
 
             aimAt(targetPos, dt = 1 / BASELINE_FPS) {
                 if (this.isDead) return;
-                const worldPos = new THREE.Vector3();
+                const worldPos = this._aimWorld;
                 this.turretPivot.getWorldPosition(worldPos);
-                const direction = new THREE.Vector3(targetPos.x - worldPos.x, 0, targetPos.z - worldPos.z);
+                const direction = this._aimDirection.set(
+                    targetPos.x - worldPos.x,
+                    0,
+                    targetPos.z - worldPos.z
+                );
                 const targetAngle = Math.atan2(direction.x, direction.z);
                 const currentAngle = this.turretPivot.rotation.y + this.mesh.rotation.y;
 
@@ -5054,6 +5111,7 @@
             mines = [];
             hideBossUI();
             hideObjectiveUI();
+            needsRender = true;
         }
 
         function startGame(options = {}) {
@@ -5907,8 +5965,14 @@
             if (state.targetEnemy) {
                 player.aimAt(state.targetEnemy.mesh.position, dt);
             } else if (state.input.x !== 0 || state.input.y !== 0) {
-                const tPos = player.mesh.position.clone().add(new THREE.Vector3(state.input.x * 10, 0, state.input.y * 10));
-                player.aimAt(tPos, dt);
+                aimTargetScratch.copy(player.mesh.position).add(
+                    enemyToPlayerScratch.set(
+                        state.input.x * 10,
+                        0,
+                        state.input.y * 10
+                    )
+                );
+                player.aimAt(aimTargetScratch, dt);
             }
 
             // Player shooting
@@ -5929,7 +5993,10 @@
                 // Terrain following for enemies
                 e.move(dt, new THREE.Vector2(0, 0)); // This updates terrain height
 
-                const toPlayer = new THREE.Vector3().subVectors(player.mesh.position, e.mesh.position);
+                const toPlayer = enemyToPlayerScratch.subVectors(
+                    player.mesh.position,
+                    e.mesh.position
+                );
                 const dist = toPlayer.length();
 
                 if (e.typeData?.isBoss) {
@@ -5986,7 +6053,7 @@
                     });
                     if (homingTarget) {
                         const speed = b.group.userData.vel.length();
-                        const desiredVelocity = new THREE.Vector3()
+                        const desiredVelocity = homingVelocityScratch
                             .subVectors(homingTarget.mesh.position, b.group.position)
                             .setY(0)
                             .normalize()
@@ -6231,13 +6298,19 @@
             });
 
             // Animate streamed lava and water without creating per-pool lights.
+            lavaMaterialScratchSet.clear();
             [...lavaMeshes, ...worldLavaMeshes].forEach(lava => {
-                lava.userData.phase += dt * 2;
+                if (lavaMaterialScratchSet.has(lava.material)) return;
+                lavaMaterialScratchSet.add(lava.material);
+                lava.userData.phase = (lava.userData.phase || 0) + dt * 2;
                 lava.material.opacity = 0.8 + Math.sin(lava.userData.phase) * 0.12;
             });
             const waterTime = clock.getElapsedTime();
             const activeWaterMeshes = waterMesh ? [waterMesh, ...waterMeshes] : waterMeshes;
+            waterGeometryScratchSet.clear();
             activeWaterMeshes.forEach(water => {
+                if (waterGeometryScratchSet.has(water.geometry)) return;
+                waterGeometryScratchSet.add(water.geometry);
                 const positions = water.geometry.attributes.position;
                 for (let index = 0; index < positions.count; index++) {
                     const x = positions.getX(index);
@@ -6267,8 +6340,12 @@
             }
 
             // Camera follow
-            const camOffset = state.cameraMode === 'wide' ? new THREE.Vector3(0, 28, 36) : new THREE.Vector3(0, 22, 28);
-            const targetCam = player.mesh.position.clone().add(camOffset);
+            const camOffset = state.cameraMode === 'wide'
+                ? cameraOffsetScratch.set(0, 28, 36)
+                : cameraOffsetScratch.set(0, 22, 28);
+            const targetCam = cameraTargetScratch
+                .copy(player.mesh.position)
+                .add(camOffset);
             const cameraAlphaAt60Fps = state.cameraMode === 'wide' ? 0.045 : 0.06;
             camera.position.lerp(targetCam, getFrameEquivalentAlpha(cameraAlphaAt60Fps, dt));
             camera.lookAt(player.mesh.position.x, 0, player.mesh.position.z + 5);
