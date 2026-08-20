@@ -144,6 +144,13 @@
             sniper: { name: "Sniper", color: 0x7c3aed, hp: 35, speed: 0.6, damage: 30, fireRate: 0.15, size: 0.9, points: 175, desc: "Long range threat" },
             healer: { name: "Medic", color: 0x22c55e, hp: 60, speed: 0.8, damage: 5, fireRate: 0.3, size: 0.85, points: 150, healAmount: 8, desc: "Heals allies" },
             berserker: { name: "Berserker", color: 0xec4899, hp: 80, speed: 1.3, damage: 18, fireRate: 0.7, size: 1.2, points: 250, desc: "Aggressive charger" },
+            shield: { name: "Shield Tank", color: 0x0ea5e9, hp: 110, speed: 0.65, damage: 14, fireRate: 0.35, size: 1.15, points: 225, desc: "Front armor absorbs most damage" },
+            artillery: { name: "Artillery", color: 0xf59e0b, hp: 55, speed: 0.45, damage: 22, fireRate: 0, size: 1.05, points: 260, desc: "Marks the ground before striking" },
+            mineLayer: { name: "Mine Layer", color: 0x64748b, hp: 70, speed: 0.8, damage: 16, fireRate: 0.2, size: 1.0, points: 230, desc: "Leaves temporary proximity mines" },
+            commander: { name: "Commander", color: 0xf43f5e, hp: 95, speed: 0.75, damage: 12, fireRate: 0.35, size: 1.1, points: 300, desc: "Strengthens nearby enemies" },
+            droneCarrier: { name: "Drone Carrier", color: 0x14b8a6, hp: 130, speed: 0.55, damage: 10, fireRate: 0.2, size: 1.3, points: 325, desc: "Deploys fast attack drones" },
+            drone: { name: "Attack Drone", color: 0x5eead4, hp: 14, speed: 1.8, damage: 5, fireRate: 0.5, size: 0.45, points: 25, desc: "Small carrier-launched attacker" },
+            reflector: { name: "Reflector", color: 0x8b5cf6, hp: 85, speed: 0.7, damage: 15, fireRate: 0.3, size: 1.05, points: 290, desc: "Periodically blocks incoming plasma" },
             forestGuardian: { name: "Rootbound Guardian", color: 0x166534, hp: 500, speed: 0.55, damage: 14, fireRate: 0, size: 1.9, points: 800, xpReward: 180, bossCoins: 100, isBoss: true, behavior: 'forest', attackInterval: 1.6, desc: "Guardian of the enchanted forest" },
             frozenGuardian: { name: "Frozen Fortress", color: 0x93c5fd, hp: 650, speed: 0.35, damage: 22, fireRate: 0, size: 2.1, points: 1000, xpReward: 220, bossCoins: 140, isBoss: true, behavior: 'frozen', attackInterval: 2.2, desc: "An armored fortress of ice" },
             volcanicGuardian: { name: "Volcanic Behemoth", color: 0x9a3412, hp: 700, speed: 0.8, damage: 18, fireRate: 0, size: 2.0, points: 1200, xpReward: 260, bossCoins: 180, isBoss: true, behavior: 'volcanic', attackInterval: 1.8, desc: "A charging engine of fire" },
@@ -158,6 +165,16 @@
             'desertGuardian',
             'swampGuardian',
             'crystalGuardian'
+        ];
+
+        const REALM_OBJECTIVES = [
+            { type: 'markedHeavy', name: 'Priority Target', description: 'Destroy the marked Heavy tank', target: 1, reward: 75 },
+            { type: 'survive', name: 'Hold the Line', description: 'Survive for 30 seconds', target: 30, reward: 100 },
+            { type: 'medics', name: 'Cut the Supply', description: 'Destroy 3 Medic tanks', target: 3, reward: 125 },
+            { type: 'combo', name: 'Combo Trial', description: 'Reach a 5-kill combo', target: 5, reward: 150 },
+            { type: 'defend', name: 'Defend the Beacon', description: 'Keep the central beacon alive for 30 seconds', target: 30, reward: 175 },
+            { type: 'noDamage', name: 'Untouchable', description: 'Avoid damage for 25 seconds', target: 25, reward: 200 },
+            { type: 'score', name: 'Score Assault', description: 'Earn 1,000 score during the objective', target: 1000, reward: 225 }
         ];
 
         const TANK_DESIGNS = {
@@ -406,6 +423,8 @@
             currentBiome: 0,
             realmProgress: 0,
             guardianPending: false,
+            activeObjective: null,
+            lastObjectiveRealm: -1,
             lastFireTime: 0,
             lastSpawnTime: 0,
             lastRegenTime: 0,
@@ -452,8 +471,9 @@
 
         // Three.js Globals
         let scene, camera, renderer, clock;
-        let player, activeBoss = null;
+        let player, activeBoss = null, objectiveBeacon = null;
         let bullets = [], enemies = [], particles = [], environmentObjects = [];
+        let artilleryStrikes = [], mines = [];
         let ambientLight, dirLight, hemisphereLight;
         let groundMesh, waterMesh, lavaMeshes = [];
         let environmentParticles = [];
@@ -887,6 +907,18 @@
             };
         }
 
+        function sanitizeObjective(savedObjective) {
+            const definition = REALM_OBJECTIVES.find(item => item.type === savedObjective?.type);
+            if (!definition) return null;
+            return {
+                ...definition,
+                progress: clampSavedNumber(savedObjective.progress, 0, definition.target, 0),
+                elapsed: clampSavedNumber(savedObjective.elapsed, 0, definition.target, 0),
+                startScore: clampSavedNumber(savedObjective.startScore, 0, 1e12, 0, true),
+                beaconHp: clampSavedNumber(savedObjective.beaconHp, 0, 100, 100)
+            };
+        }
+
         function sanitizeActiveRun(savedRun) {
             if (!savedRun || savedRun.version !== SAVE_VERSION || savedRun.alive !== true) return null;
 
@@ -930,7 +962,8 @@
                             -Math.PI * 2,
                             Math.PI * 2,
                             0
-                        )
+                        ),
+                        objectiveTarget: savedEnemy.objectiveTarget === true
                     }];
                 })
                 : [];
@@ -947,6 +980,8 @@
                 currentBiome: clampSavedNumber(savedRun.currentBiome, 0, BIOMES.length - 1, 0, true),
                 realmProgress: clampSavedNumber(savedRun.realmProgress, 0, 10000, 0, true),
                 guardianPending: savedRun.guardianPending === true,
+                activeObjective: sanitizeObjective(savedRun.activeObjective),
+                lastObjectiveRealm: clampSavedNumber(savedRun.lastObjectiveRealm, -1, 10000, -1, true),
                 upgradeTiers,
                 runTankId,
                 runPermanentUpgrades,
@@ -1015,6 +1050,8 @@
                 currentBiome: state.currentBiome,
                 realmProgress: state.realmProgress,
                 guardianPending: state.guardianPending,
+                activeObjective: state.activeObjective ? { ...state.activeObjective } : null,
+                lastObjectiveRealm: state.lastObjectiveRealm,
                 upgradeTiers: { ...state.upgradeTiers },
                 runTankId: state.runTankId,
                 runPermanentUpgrades: { ...state.runPermanentUpgrades },
@@ -1035,7 +1072,8 @@
                         x: enemy.mesh.position.x,
                         z: enemy.mesh.position.z
                     },
-                    rotationY: enemy.mesh.rotation.y
+                    rotationY: enemy.mesh.rotation.y,
+                    objectiveTarget: enemy.isObjectiveTarget === true
                 })),
                 enemiesIntroduced: [...state.enemiesIntroduced],
                 pendingUpgradeCount: state.pendingUpgradeCount,
@@ -2317,6 +2355,9 @@
                 this.lastHealTime = 0;
                 this.nextBossAttackTime = 0;
                 this.nextBossSpecialTime = 0;
+                this.nextAbilityTime = 0;
+                this.speedMultiplier = 1;
+                this.damageMultiplier = 1;
 
                 // Physics-based animation properties
                 this.velocity = new THREE.Vector3();
@@ -2415,7 +2456,9 @@
                 this.turretPivot.add(mantlet);
 
                 // Barrel
-                const barrelLength = type === 'sniper' ? 4.8 : 3.4;
+                const barrelLength = type === 'sniper'
+                    ? 4.8
+                    : type === 'artillery' ? 5.2 : 3.4;
                 const barrelGeo = new THREE.CylinderGeometry(0.13 * scale, 0.16 * scale, barrelLength * scale, 12);
                 const barrelMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.3, metalness: 0.8 });
                 this.barrel = new THREE.Mesh(barrelGeo, barrelMat);
@@ -2529,6 +2572,63 @@
                     this.mesh.add(beacon);
                 }
 
+                if (!isPlayer && type === 'shield') {
+                    const shieldPlate = new THREE.Mesh(
+                        new THREE.BoxGeometry(3.0 * scale, 1.45 * scale, 0.22 * scale),
+                        new THREE.MeshStandardMaterial({
+                            color: 0x38bdf8,
+                            transparent: true,
+                            opacity: 0.72,
+                            metalness: 0.55
+                        })
+                    );
+                    shieldPlate.position.set(0, 1.0 * scale, 2.35 * scale);
+                    shieldPlate.castShadow = true;
+                    this.mesh.add(shieldPlate);
+                } else if (!isPlayer && type === 'commander') {
+                    const aura = new THREE.Mesh(
+                        new THREE.RingGeometry(3.2, 3.65, 36),
+                        new THREE.MeshBasicMaterial({
+                            color: 0xfb7185,
+                            transparent: true,
+                            opacity: 0.48,
+                            side: THREE.DoubleSide
+                        })
+                    );
+                    aura.rotation.x = -Math.PI / 2;
+                    aura.position.y = 0.12;
+                    this.mesh.add(aura);
+                    this.commanderAura = aura;
+                } else if (!isPlayer && type === 'reflector') {
+                    const reflectorShield = new THREE.Mesh(
+                        new THREE.SphereGeometry(2.55 * scale, 16, 10),
+                        new THREE.MeshBasicMaterial({
+                            color: 0xc4b5fd,
+                            wireframe: true,
+                            transparent: true,
+                            opacity: 0.42
+                        })
+                    );
+                    reflectorShield.position.y = 1.1 * scale;
+                    this.mesh.add(reflectorShield);
+                    this.reflectorShield = reflectorShield;
+                } else if (!isPlayer && ['mineLayer', 'droneCarrier', 'artillery'].includes(type)) {
+                    const equipmentMat = new THREE.MeshStandardMaterial({
+                        color: darkColor,
+                        roughness: 0.45,
+                        metalness: 0.65
+                    });
+                    [-1, 1].forEach(side => {
+                        const equipment = new THREE.Mesh(
+                            new THREE.BoxGeometry(0.5 * scale, 0.5 * scale, 1.25 * scale),
+                            equipmentMat
+                        );
+                        equipment.position.set(side * 1.15 * scale, 1.45 * scale, -0.65 * scale);
+                        equipment.castShadow = true;
+                        this.mesh.add(equipment);
+                    });
+                }
+
                 // Player indicator ring
                 if (isPlayer) {
                     const ringGeo = new THREE.RingGeometry(2.5, 2.8, 32);
@@ -2568,7 +2668,7 @@
                     if (this.isPlayer) {
                         speed *= state.playerStats.speed / 100;
                     } else {
-                        speed *= (this.typeData?.speed || 1) * 0.55;
+                        speed *= (this.typeData?.speed || 1) * 0.55 * this.speedMultiplier;
                     }
 
                     // Store velocity in world units per second. Integrate the
@@ -2695,6 +2795,15 @@
                     this.bossIndicator.rotation.z -= dt * 0.55;
                     this.bossIndicator.material.opacity =
                         0.58 + Math.sin(clock.getElapsedTime() * 3) * 0.14;
+                }
+                if (this.commanderAura) {
+                    this.commanderAura.rotation.z += dt * 0.35;
+                    this.commanderAura.material.opacity =
+                        0.38 + Math.sin(clock.getElapsedTime() * 2) * 0.12;
+                }
+                if (this.reflectorShield) {
+                    this.reflectorShield.rotation.y += dt * 0.6;
+                    this.reflectorShield.visible = isReflectorShieldActive(this);
                 }
             }
         }
@@ -3348,6 +3457,12 @@
             if (level >= 4) types.push('sniper');
             if (level >= 5) types.push('healer');
             if (level >= 7) types.push('berserker');
+            if (level >= 8) types.push('shield');
+            if (level >= 10) types.push('artillery');
+            if (level >= 11) types.push('mineLayer');
+            if (level >= 13) types.push('commander');
+            if (level >= 14) types.push('droneCarrier');
+            if (level >= 16) types.push('reflector');
             return types[Math.floor(Math.random() * types.length)];
         }
 
@@ -3357,6 +3472,189 @@
             // patch, but calculate it deterministically and only while playing.
             const difficultyMultiplier = 1 + level * 0.1;
             return baseSpawnRate / (1 + 0.1 * difficultyMultiplier);
+        }
+
+        function updateObjectiveHUD() {
+            const objectiveHud = document.getElementById('objective-hud');
+            const objective = state.activeObjective;
+            objectiveHud.classList.toggle('show', Boolean(objective));
+            if (!objective) return;
+            const progress = Math.max(0, Math.min(objective.target, objective.progress));
+            document.getElementById('objective-name').textContent = objective.name;
+            document.getElementById('objective-description').textContent = objective.description;
+            document.getElementById('objective-progress-fill').style.width =
+                `${Math.min(100, progress / objective.target * 100)}%`;
+            document.getElementById('objective-progress-text').textContent =
+                objective.type === 'defend'
+                    ? `${Math.ceil(progress)} / ${objective.target}s • Beacon ${Math.ceil(objective.beaconHp)}%`
+                    : `${Math.floor(progress)} / ${objective.target}`;
+        }
+
+        function hideObjectiveUI() {
+            document.getElementById('objective-hud').classList.remove('show');
+        }
+
+        function createObjectiveBeacon() {
+            if (objectiveBeacon) return;
+            const group = new THREE.Group();
+            const base = new THREE.Mesh(
+                new THREE.CylinderGeometry(1.3, 1.6, 0.8, 12),
+                new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7 })
+            );
+            base.position.y = 0.4;
+            const core = new THREE.Mesh(
+                new THREE.OctahedronGeometry(0.65),
+                new THREE.MeshStandardMaterial({
+                    color: 0xfacc15,
+                    emissive: 0xf59e0b,
+                    emissiveIntensity: 0.8
+                })
+            );
+            core.position.y = 1.4;
+            group.add(base, core);
+            group.position.y = getTerrainHeight(0, 0);
+            scene.add(group);
+            objectiveBeacon = group;
+        }
+
+        function markObjectiveTarget(enemy) {
+            if (enemy.isObjectiveTarget) return;
+            enemy.isObjectiveTarget = true;
+            const marker = new THREE.Mesh(
+                new THREE.RingGeometry(2.8, 3.15, 32),
+                new THREE.MeshBasicMaterial({
+                    color: 0xfacc15,
+                    transparent: true,
+                    opacity: 0.8,
+                    side: THREE.DoubleSide
+                })
+            );
+            marker.rotation.x = -Math.PI / 2;
+            marker.position.y = 0.15;
+            enemy.mesh.add(marker);
+            enemy.objectiveMarker = marker;
+        }
+
+        function spawnMarkedHeavy() {
+            if (!player || enemies.some(enemy => enemy.isObjectiveTarget && !enemy.isDead)) return;
+            const heavy = new Tank(ENEMY_TYPES.heavy.color, false, 'heavy');
+            const angle = Math.random() * Math.PI * 2;
+            heavy.mesh.position.set(Math.cos(angle) * 32, 0, Math.sin(angle) * 32);
+            heavy.move(0, new THREE.Vector2(0, 0));
+            markObjectiveTarget(heavy);
+            enemies.push(heavy);
+        }
+
+        function restoreObjectiveVisuals() {
+            if (!state.activeObjective) {
+                hideObjectiveUI();
+                removeAndDisposeObject(objectiveBeacon);
+                objectiveBeacon = null;
+                return;
+            }
+            if (state.activeObjective.type === 'defend') createObjectiveBeacon();
+            if (state.activeObjective.type === 'markedHeavy') spawnMarkedHeavy();
+            updateObjectiveHUD();
+        }
+
+        function startRealmObjectiveIfNeeded() {
+            if (state.activeObjective || activeBoss ||
+                state.lastObjectiveRealm >= state.realmProgress) return false;
+            const requiredLevel = state.realmProgress * 3 + 2;
+            if (state.level < requiredLevel) return false;
+
+            const definition = REALM_OBJECTIVES[state.realmProgress % REALM_OBJECTIVES.length];
+            state.activeObjective = {
+                ...definition,
+                progress: 0,
+                elapsed: 0,
+                startScore: state.score,
+                beaconHp: 100
+            };
+            state.lastObjectiveRealm = state.realmProgress;
+            restoreObjectiveVisuals();
+            showUpgradeNotification(`📋 ${definition.name}`);
+            saveActiveRun();
+            return true;
+        }
+
+        function completeRealmObjective() {
+            const objective = state.activeObjective;
+            if (!objective) return;
+            profile.coins += objective.reward;
+            state.runStats.coinsEarned += objective.reward;
+            if (player && !player.isDead) {
+                player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.15);
+            }
+            showUpgradeNotification(`✅ Objective complete!  💰 +${objective.reward}`);
+            playGameSound('upgrade');
+            triggerHaptic('medium');
+            state.activeObjective = null;
+            removeAndDisposeObject(objectiveBeacon);
+            objectiveBeacon = null;
+            hideObjectiveUI();
+            saveProfile();
+            spawnPendingGuardian();
+            saveActiveRun();
+        }
+
+        function failRealmObjective(message = 'Objective failed') {
+            if (!state.activeObjective) return;
+            state.activeObjective = null;
+            removeAndDisposeObject(objectiveBeacon);
+            objectiveBeacon = null;
+            hideObjectiveUI();
+            showUpgradeNotification(`❌ ${message}`);
+            spawnPendingGuardian();
+            saveActiveRun();
+        }
+
+        function recordObjectiveKill(enemy) {
+            const objective = state.activeObjective;
+            if (!objective) return;
+            if (objective.type === 'markedHeavy' && enemy.isObjectiveTarget) {
+                objective.progress = 1;
+            } else if (objective.type === 'medics' && enemy.type === 'healer') {
+                objective.progress++;
+            }
+            if (objective.progress >= objective.target) completeRealmObjective();
+            else updateObjectiveHUD();
+        }
+
+        function recordObjectivePlayerDamage() {
+            if (state.activeObjective?.type === 'noDamage') {
+                failRealmObjective('Damage taken');
+            }
+        }
+
+        function updateRealmObjective(dt) {
+            const objective = state.activeObjective;
+            if (!objective) return;
+            if (['survive', 'noDamage', 'defend'].includes(objective.type)) {
+                objective.elapsed += dt;
+                objective.progress = Math.min(objective.target, objective.elapsed);
+            } else if (objective.type === 'combo') {
+                objective.progress = Math.max(objective.progress, state.comboCount);
+            } else if (objective.type === 'score') {
+                objective.progress = Math.max(0, state.score - objective.startScore);
+            }
+
+            if (objective.type === 'defend') {
+                const nearbyEnemies = enemies.filter(enemy => {
+                    if (enemy.isDead) return false;
+                    const x = enemy.mesh.position.x;
+                    const z = enemy.mesh.position.z;
+                    return x * x + z * z < 64;
+                }).length;
+                objective.beaconHp = Math.max(0, objective.beaconHp - nearbyEnemies * 3 * dt);
+                if (objective.beaconHp <= 0) {
+                    failRealmObjective('Beacon destroyed');
+                    return;
+                }
+            }
+
+            if (objective.progress >= objective.target) completeRealmObjective();
+            else updateObjectiveHUD();
         }
 
         function updateBossHUD() {
@@ -3398,7 +3696,8 @@
         }
 
         function spawnPendingGuardian() {
-            if (!state.guardianPending || activeBoss || !player || !state.isPlaying) return null;
+            if (!state.guardianPending || activeBoss || state.activeObjective ||
+                !player || player.isDead || !state.isPlaying) return null;
             const guardianType = REALM_GUARDIAN_TYPES[state.realmProgress % REALM_GUARDIAN_TYPES.length];
             const data = ENEMY_TYPES[guardianType];
             const angle = Math.random() * Math.PI * 2;
@@ -3484,6 +3783,7 @@
             playGameSound('unlock');
             triggerHaptic('heavy');
             saveProfile();
+            startRealmObjectiveIfNeeded();
             queueGuardianIfNeeded();
             if (state.gamePhase === 'playing') spawnPendingGuardian();
             saveActiveRun();
@@ -3497,11 +3797,18 @@
             ]);
             while (bullets.length > 0) releaseBulletAt(bullets.length - 1);
             removeAndDisposeObjects(particles.map(particle => particle.mesh));
+            removeAndDisposeObjects(artilleryStrikes.map(strike => strike.mesh));
+            removeAndDisposeObjects(mines.map(mine => mine.mesh));
+            removeAndDisposeObject(objectiveBeacon);
             player = null;
             activeBoss = null;
+            objectiveBeacon = null;
             enemies = [];
             particles = [];
+            artilleryStrikes = [];
+            mines = [];
             hideBossUI();
+            hideObjectiveUI();
         }
 
         function startGame() {
@@ -3516,6 +3823,8 @@
             state.xpToNext = 100;
             state.realmProgress = 0;
             state.guardianPending = false;
+            state.activeObjective = null;
+            state.lastObjectiveRealm = -1;
             state.isPlaying = true;
             state.gamePhase = 'playing';
             state.lastFireTime = now - CONFIG.fireRate;
@@ -3585,6 +3894,10 @@
             state.currentBiome = savedRun.currentBiome;
             state.realmProgress = savedRun.realmProgress;
             state.guardianPending = savedRun.guardianPending;
+            state.activeObjective = savedRun.activeObjective
+                ? { ...savedRun.activeObjective }
+                : null;
+            state.lastObjectiveRealm = savedRun.lastObjectiveRealm;
             state.upgradeTiers = { ...savedRun.upgradeTiers };
             state.runTankId = savedRun.runTankId;
             state.runPermanentUpgrades = { ...savedRun.runPermanentUpgrades };
@@ -3644,6 +3957,7 @@
                     enemy.nextBossAttackTime = bossNow + 1;
                     enemy.nextBossSpecialTime = bossNow + 5;
                 }
+                if (savedEnemy.objectiveTarget) markObjectiveTarget(enemy);
             });
 
             setScreenVisibility('tutorial-screen', false);
@@ -3656,6 +3970,7 @@
             updateHUD();
             updateComboIndicator();
             updateBossHUD();
+            restoreObjectiveVisuals();
 
             if (state.pendingUpgradeCount > 0) {
                 beginNextUpgradeChoice(state.currentUpgradeChoices);
@@ -3721,6 +4036,7 @@
             setPauseUIVisible(true);
             syncHUDControls();
             updateHUD();
+            startRealmObjectiveIfNeeded();
             queueGuardianIfNeeded();
             spawnPendingGuardian();
             saveActiveRun();
@@ -3882,12 +4198,176 @@
                 z = (Math.random() - 0.5) * 80;
             } while (player.mesh.position.distanceTo(new THREE.Vector3(x, 0, z)) < 25);
 
-            const type = getEnemyTypeForLevel(state.level);
+            const type = state.activeObjective?.type === 'medics' && Math.random() < 0.35
+                ? 'healer'
+                : getEnemyTypeForLevel(state.level);
             showEnemyIntro(type);
 
             const enemy = new Tank(ENEMY_TYPES[type].color, false, type);
             enemy.mesh.position.set(x, 0, z);
             enemies.push(enemy);
+        }
+
+        function isReflectorShieldActive(enemy) {
+            if (enemy.type !== 'reflector') return false;
+            return clock.getElapsedTime() % 5 < 2;
+        }
+
+        function isShieldFrontHit(enemy, projectilePosition) {
+            if (enemy.type !== 'shield') return false;
+            const toProjectile = new THREE.Vector3().subVectors(
+                projectilePosition,
+                enemy.mesh.position
+            ).setY(0).normalize();
+            const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(
+                new THREE.Vector3(0, 1, 0),
+                enemy.mesh.rotation.y
+            );
+            return forward.dot(toProjectile) > 0.25;
+        }
+
+        function createArtilleryStrike(position, damage = 22) {
+            const ring = new THREE.Mesh(
+                new THREE.RingGeometry(3.8, 4.5, 32),
+                new THREE.MeshBasicMaterial({
+                    color: 0xff4444,
+                    transparent: true,
+                    opacity: 0.72,
+                    side: THREE.DoubleSide
+                })
+            );
+            ring.rotation.x = -Math.PI / 2;
+            ring.position.set(position.x, getTerrainHeight(position.x, position.z) + 0.16, position.z);
+            scene.add(ring);
+            artilleryStrikes.push({ mesh: ring, timer: 1.5, damage, radius: 4.5 });
+        }
+
+        function createMine(position, damage = 16) {
+            while (mines.length >= 8) {
+                removeAndDisposeObject(mines.shift().mesh);
+            }
+            const mine = new THREE.Group();
+            const base = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.7, 0.85, 0.3, 10),
+                new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8 })
+            );
+            const light = new THREE.Mesh(
+                new THREE.SphereGeometry(0.13, 8, 6),
+                new THREE.MeshBasicMaterial({ color: 0xff3333 })
+            );
+            light.position.y = 0.25;
+            mine.add(base, light);
+            mine.position.set(
+                position.x,
+                getTerrainHeight(position.x, position.z) + 0.15,
+                position.z
+            );
+            scene.add(mine);
+            mines.push({ mesh: mine, armedIn: 0.8, life: 15, damage, radius: 2.6 });
+        }
+
+        function applyPlayerDamage(amount, impactPosition, color = 0xff4444) {
+            if (!player || player.isDead) return;
+            player.takeDamage(amount);
+            recordObjectivePlayerDamage();
+            playGameSound('damage');
+            triggerHaptic('medium');
+            createExplosion(impactPosition, 14, color, 'armor');
+            document.getElementById('damage-overlay').style.opacity =
+                String(0.5 * getFlashScale());
+            setTimeout(() => document.getElementById('damage-overlay').style.opacity = '0', 150);
+            updateHUD();
+            if (player.hp <= 0) endGame();
+        }
+
+        function updateHazards(dt) {
+            for (let i = artilleryStrikes.length - 1; i >= 0; i--) {
+                const strike = artilleryStrikes[i];
+                strike.timer -= dt;
+                strike.mesh.rotation.z += dt * 1.8;
+                strike.mesh.material.opacity = 0.45 + Math.sin(strike.timer * 12) * 0.25;
+                if (strike.timer <= 0) {
+                    const impact = strike.mesh.position.clone();
+                    if (player && player.mesh.position.distanceTo(impact) < strike.radius) {
+                        applyPlayerDamage(strike.damage, impact, 0xffaa00);
+                    } else {
+                        createExplosion(impact, 12, 0xffaa00, 'ground');
+                    }
+                    removeAndDisposeObject(strike.mesh);
+                    artilleryStrikes.splice(i, 1);
+                }
+            }
+
+            for (let i = mines.length - 1; i >= 0; i--) {
+                const mine = mines[i];
+                mine.armedIn -= dt;
+                mine.life -= dt;
+                mine.mesh.rotation.y += dt * 0.8;
+                const triggered = mine.armedIn <= 0 && player &&
+                    player.mesh.position.distanceTo(mine.mesh.position) < mine.radius;
+                if (triggered) {
+                    const impact = mine.mesh.position.clone();
+                    applyPlayerDamage(mine.damage, impact, 0xff5555);
+                    removeAndDisposeObject(mine.mesh);
+                    mines.splice(i, 1);
+                } else if (mine.life <= 0) {
+                    removeAndDisposeObject(mine.mesh);
+                    mines.splice(i, 1);
+                }
+            }
+        }
+
+        function updateCommanderBuffs() {
+            enemies.forEach(enemy => {
+                enemy.speedMultiplier = 1;
+                enemy.damageMultiplier = 1;
+            });
+            enemies.filter(enemy => enemy.type === 'commander' && !enemy.isDead)
+                .forEach(commander => {
+                    enemies.forEach(ally => {
+                        if (ally === commander || ally.isDead || ally.typeData?.isBoss) return;
+                        if (ally.mesh.position.distanceTo(commander.mesh.position) < 16) {
+                            ally.speedMultiplier = 1.18;
+                            ally.damageMultiplier = 1.2;
+                        }
+                    });
+                });
+        }
+
+        function updateStrategicEnemyAI(enemy, dt, toPlayer, distance) {
+            const type = enemy.type;
+            if (!['shield', 'artillery', 'mineLayer', 'commander', 'droneCarrier', 'drone', 'reflector'].includes(type)) {
+                return false;
+            }
+
+            const towardPlayer = new THREE.Vector2(toPlayer.x, toPlayer.z).normalize();
+            const now = clock.getElapsedTime();
+            if (type === 'artillery') {
+                if (distance < 26) enemy.move(dt, towardPlayer.clone().multiplyScalar(-1));
+                else if (distance > 34) enemy.move(dt, towardPlayer);
+                enemy.aimAt(player.mesh.position, dt);
+                if (now >= enemy.nextAbilityTime) {
+                    createArtilleryStrike(player.mesh.position, enemy.typeData.damage * enemy.damageMultiplier);
+                    enemy.nextAbilityTime = now + 4;
+                }
+            } else {
+                if (distance > (type === 'drone' ? 10 : 18)) enemy.move(dt, towardPlayer);
+                enemy.aimAt(player.mesh.position, dt);
+                const chance = type === 'drone' ? 0.01 : 0.0045;
+                if (Math.random() < getFrameEquivalentChance(chance, dt)) {
+                    shoot(enemy, { damageMultiplier: enemy.damageMultiplier });
+                }
+
+                if (type === 'mineLayer' && now >= enemy.nextAbilityTime) {
+                    createMine(enemy.mesh.position, enemy.typeData.damage * enemy.damageMultiplier);
+                    enemy.nextAbilityTime = now + 4.5;
+                } else if (type === 'droneCarrier' && now >= enemy.nextAbilityTime) {
+                    spawnBossMinion('drone', enemy);
+                    spawnBossMinion('drone', enemy);
+                    enemy.nextAbilityTime = now + 6;
+                }
+            }
+            return true;
         }
 
         function showScorePopup(x, z, points, coins = 0) {
@@ -3911,6 +4391,9 @@
             if (!player || player.isDead) return;
 
             updateCombo(dt);
+            updateRealmObjective(dt);
+            updateHazards(dt);
+            updateCommanderBuffs();
             state.runStats.elapsedSeconds += dt;
 
             // Player movement
@@ -3983,6 +4466,8 @@
 
                 if (e.typeData?.isBoss) {
                     updateBossAI(e, dt, toPlayer, dist);
+                } else if (updateStrategicEnemyAI(e, dt, toPlayer, dist)) {
+                    // Strategic role handled above.
                 } else if (e.type === 'healer') {
                     const woundedAlly = enemies.find(ally => !ally.isDead && ally !== e && ally.hp < ally.maxHp);
                     if (woundedAlly && clock.getElapsedTime() - e.lastHealTime > 2) {
@@ -3994,16 +4479,22 @@
                     if (dist < 25) e.move(dt, new THREE.Vector2(-toPlayer.x, -toPlayer.z).normalize().multiplyScalar(0.5));
                     else if (dist > 30) e.move(dt, new THREE.Vector2(toPlayer.x, toPlayer.z).normalize());
                     e.aimAt(player.mesh.position, dt);
-                    if (Math.random() < getFrameEquivalentChance(0.008, dt)) shoot(e);
+                    if (Math.random() < getFrameEquivalentChance(0.008, dt)) {
+                        shoot(e, { damageMultiplier: e.damageMultiplier });
+                    }
                 } else if (e.type === 'berserker') {
                     e.move(dt, new THREE.Vector2(toPlayer.x, toPlayer.z).normalize());
                     e.aimAt(player.mesh.position, dt);
-                    if (dist < 18 && Math.random() < getFrameEquivalentChance(0.025, dt)) shoot(e);
+                    if (dist < 18 && Math.random() < getFrameEquivalentChance(0.025, dt)) {
+                        shoot(e, { damageMultiplier: e.damageMultiplier });
+                    }
                 } else {
                     if (dist > 18) e.move(dt, new THREE.Vector2(toPlayer.x, toPlayer.z).normalize());
                     e.aimAt(player.mesh.position, dt);
                     const shotChance = 0.012 * (ENEMY_TYPES[e.type]?.fireRate || 0.4);
-                    if (Math.random() < getFrameEquivalentChance(shotChance, dt)) shoot(e);
+                    if (Math.random() < getFrameEquivalentChance(shotChance, dt)) {
+                        shoot(e, { damageMultiplier: e.damageMultiplier });
+                    }
                 }
             });
 
@@ -4084,7 +4575,17 @@
                                         enemyHitTime
                                     );
                                     b.group.position.copy(bulletImpactPosition);
-                                    enemy.takeDamage(b.group.userData.damage);
+                                    if (isReflectorShieldActive(enemy)) {
+                                        createExplosion(b.group.position, 8, 0xc4b5fd, 'armor');
+                                        playGameSound('impact');
+                                        hit = true;
+                                        break;
+                                    }
+                                    const shieldedDamage = isShieldFrontHit(
+                                        enemy,
+                                        b.previousPosition
+                                    ) ? b.group.userData.damage * 0.25 : b.group.userData.damage;
+                                    enemy.takeDamage(shieldedDamage);
                                     playGameSound('impact');
 
                                     const enemyColor = ENEMY_TYPES[enemy.type]?.color || 0xff0000;
@@ -4092,6 +4593,7 @@
                                     createExplosion(b.group.position, 18, enemyColor, 'armor', enemy.type);
 
                                     if (enemy.isDead) {
+                                        recordObjectiveKill(enemy);
                                         const enemyData = ENEMY_TYPES[enemy.type] || {};
                                         const points = enemyData.points || 100;
                                         const rewards = awardEnemyKill(points);
@@ -4132,6 +4634,7 @@
                             );
                             b.group.position.copy(bulletImpactPosition);
                             player.takeDamage(b.group.userData.damage);
+                            recordObjectivePlayerDamage();
                             playGameSound('damage');
                             triggerHaptic('medium');
                             createExplosion(b.group.position, 14, 0x4ade80, 'armor');
@@ -4250,7 +4753,7 @@
             // Spawner
             const spawnRate = getSpawnRateForLevel(state.level);
             const maxEnemies = Math.min(12, 3 + state.level);
-            if (!activeBoss && !state.guardianPending &&
+            if (!activeBoss && (!state.guardianPending || state.activeObjective) &&
                 clock.getElapsedTime() - state.lastSpawnTime > spawnRate) {
                 if (enemies.filter(e => !e.isDead).length < maxEnemies) {
                     spawnEnemy();
@@ -4362,6 +4865,7 @@
             setScreenVisibility('pause-screen', false);
             setScreenVisibility('game-over-screen', true);
             hideBossUI();
+            hideObjectiveUI();
             setPauseUIVisible(false);
             updateComboIndicator();
             syncHUDControls();

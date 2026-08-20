@@ -462,6 +462,71 @@
             transform: translateX(-50%) scale(1);
         }
 
+        #objective-hud {
+            position: fixed;
+            top: 176px;
+            left: 50%;
+            z-index: 16;
+            width: min(86vw, 430px);
+            padding: 9px 12px;
+            border: 1px solid rgba(250,204,21,0.35);
+            border-radius: 16px;
+            background: rgba(8,20,45,0.84);
+            color: #fff;
+            opacity: 0;
+            pointer-events: none;
+            transform: translateX(-50%) translateY(-8px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            backdrop-filter: blur(12px);
+        }
+
+        #objective-hud.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .objective-title {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .objective-title span {
+            color: rgba(255,255,255,0.55);
+        }
+
+        #objective-description {
+            margin-top: 4px;
+            color: rgba(255,255,255,0.72);
+            font-size: 10px;
+        }
+
+        .objective-progress-track {
+            height: 7px;
+            margin-top: 6px;
+            overflow: hidden;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.5);
+        }
+
+        #objective-progress-fill {
+            width: 0;
+            height: 100%;
+            border-radius: 6px;
+            background: linear-gradient(90deg, #facc15, #22c55e);
+            transition: width 0.18s ease;
+        }
+
+        #objective-progress-text {
+            margin-top: 3px;
+            color: rgba(255,255,255,0.6);
+            font-size: 9px;
+            text-align: right;
+        }
+
         #boss-hud {
             position: fixed;
             top: 176px;
@@ -1102,6 +1167,7 @@
                 white-space: nowrap;
             }
 
+            #objective-hud,
             #boss-hud {
                 top: calc(max(8px, env(safe-area-inset-top)) + 178px);
                 width: min(90vw, 430px);

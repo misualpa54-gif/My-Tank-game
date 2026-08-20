@@ -4,18 +4,17 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phases 1–9 provide the stable offline APK, optimization, consistent combat, portrait controls, continuation, upgrades, economy, garage, quality, audio, accessibility, tutorial, results, and balance foundation. Phase 10 adds Realm Guardian progression:
+Phases 1–10 provide the stable offline APK, optimization, portrait controls, saving, upgrades, economy, garage, quality, audio/accessibility, and Realm Guardians. Phase 11 adds strategic combat roles and realm objectives:
 
-- every three levels prepares the guardian of the current biome instead of changing realm immediately;
-- normal spawning pauses until the guardian is defeated;
-- six unique guardians use spread cannons, heavy shots, charging, strafing, healing, summons, and crystal patterns;
-- a warning overlay, procedural warning sound/haptic, rotating boss marker, and boss health bar clearly present each encounter;
-- boss attacks use elapsed-time cooldowns and swept projectiles;
-- guardian minions obey the existing 12-enemy cap;
-- score, controlled XP, combo coins, and bonus realm coins reward each victory;
-- biome progression unlocks only after guardian defeat and cannot be skipped by large XP gains;
-- active guardian type, health, position, realm progress, and pending state survive Continue/reload;
-- all previous quality, saving, garage, portrait, performance, consistency, audio, accessibility, offline, and Android behavior remains active.
+- Shield Tanks, Artillery, Mine Layers, Commanders, Drone Carriers, Attack Drones, and Reflectors enter at controlled later levels;
+- visible shields, auras, equipment pods, artillery warning rings, and armed mines explain each role;
+- artillery uses a 1.5-second warning, mines are capped at eight, and all minions obey the global enemy cap;
+- Commander speed/damage buffs and Reflector shield windows create target-priority decisions;
+- one objective at a time asks for a marked Heavy, survival, Medic kills, combo, beacon defense, no-damage play, or a score target;
+- objectives reward permanent coins and a 15% repair;
+- a pending guardian waits until the objective succeeds or fails while normal spawning continues;
+- objective type, progress, timing, score baseline, beacon health, and marked target survive Continue/reload;
+- all previous guardian, quality, saving, garage, portrait, performance, consistency, audio, accessibility, offline, and Android behavior remains active.
 
 Detailed reports are in:
 
@@ -27,8 +26,9 @@ Detailed reports are in:
 - `docs/phase8-quality-report.md`
 - `docs/phase9-polish-balance-report.md`
 - `docs/phase10-realm-guardians-report.md`
+- `docs/phase11-strategic-enemies-objectives-report.md`
 
-The next approved content stage is strategic enemies and realm objectives, followed by upgrade evolutions, mastery/achievements, daily challenges, and extra modes. Final-release signing and store work remain separate.
+The next approved stage is upgrade evolutions and trade-off upgrades, followed by tank mastery/achievements, daily challenges, and extra modes. Final-release signing and store work remain separate.
 
 ## Project structure
 

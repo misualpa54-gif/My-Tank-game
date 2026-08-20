@@ -161,6 +161,18 @@ function createHarness(storageSeed = {}) {
       spawnPendingGuardian,
       handleGuardianDefeat,
       updateBossHUD,
+      createArtilleryStrike,
+      createMine,
+      updateHazards,
+      isShieldFrontHit,
+      isReflectorShieldActive,
+      artilleryStrikes: () => artilleryStrikes,
+      mines: () => mines,
+      startRealmObjectiveIfNeeded,
+      updateRealmObjective,
+      recordObjectiveKill,
+      completeRealmObjective,
+      strategicEnemyTypes: () => ['shield', 'artillery', 'mineLayer', 'commander', 'droneCarrier', 'reflector'],
       guardianTypes: () => REALM_GUARDIAN_TYPES,
       openGarage,
       closeGarage,
@@ -406,6 +418,11 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     api.startGame();
     api.addXP(100);
     api.applyUpgradeChoice(api.state().currentUpgradeChoices[0]);
+    assert.equal(api.state().activeObjective.type, 'markedHeavy');
+    const objectiveTarget = api.enemies().find(enemy => enemy.isObjectiveTarget);
+    assert.ok(objectiveTarget);
+    api.recordObjectiveKill(objectiveTarget);
+    assert.equal(api.state().activeObjective, null);
     api.addXP(140);
     assert.equal(api.state().level, 3);
     assert.equal(api.state().currentBiome, 0);
@@ -431,6 +448,33 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
       document.getElementById('boss-hud').classList.contains('show'),
       false
     );
+  });
+
+  await t.test('strategic enemies telegraph hazards and defensive roles', () => {
+    api.startGame();
+    assert.equal(api.strategicEnemyTypes().length, 6);
+    const shield = api.makeEnemy('shield', 0, 10);
+    shield.mesh.rotation.y = 0;
+    assert.equal(
+      api.isShieldFrontHit(shield, new window.THREE.Vector3(0, 0, 15)),
+      true
+    );
+    assert.equal(
+      api.isShieldFrontHit(shield, new window.THREE.Vector3(0, 0, 5)),
+      false
+    );
+
+    const startingHp = api.player().hp;
+    api.createArtilleryStrike(api.player().mesh.position, 10);
+    assert.equal(api.artilleryStrikes().length, 1);
+    api.updateHazards(1.6);
+    assert.ok(api.player().hp < startingHp);
+
+    const hpAfterArtillery = api.player().hp;
+    api.createMine(api.player().mesh.position, 8);
+    assert.equal(api.mines().length, 1);
+    api.updateHazards(1);
+    assert.ok(api.player().hp < hpAfterArtillery);
   });
 
   await t.test('reserves the upper portrait area for HUD controls', () => {
@@ -731,6 +775,29 @@ test('pending upgrade choices survive a page reload', () => {
   secondSession.dom.window.close();
 });
 
+test('active realm objective survives a complete page reload', () => {
+  const firstSession = createHarness();
+  firstSession.api.startGame();
+  firstSession.api.state().realmProgress = 1;
+  firstSession.api.state().lastObjectiveRealm = 0;
+  firstSession.api.state().level = 5;
+  firstSession.api.startRealmObjectiveIfNeeded();
+  firstSession.api.updateRealmObjective(7);
+  firstSession.api.saveActiveRun();
+  const savedRun = firstSession.window.localStorage.getItem('tank_realms_active_run_v1');
+  firstSession.dom.window.close();
+
+  const secondSession = createHarness({ tank_realms_active_run_v1: savedRun });
+  assert.equal(secondSession.api.continueSavedRun(), true);
+  assert.equal(secondSession.api.state().activeObjective.type, 'survive');
+  assert.equal(secondSession.api.state().activeObjective.progress, 7);
+  assert.equal(
+    secondSession.window.document.getElementById('objective-hud').classList.contains('show'),
+    true
+  );
+  secondSession.dom.window.close();
+});
+
 test('active guardian survives a complete page reload', () => {
   const firstSession = createHarness();
   firstSession.api.startGame();
@@ -752,6 +819,32 @@ test('active guardian survives a complete page reload', () => {
     true
   );
   secondSession.dom.window.close();
+});
+
+test('one saved realm objective is active at a time', () => {
+  const harness = createHarness();
+  harness.api.startGame();
+  const objectiveTypes = [];
+  for (let realm = 0; realm < 7; realm++) {
+    harness.api.state().realmProgress = realm;
+    harness.api.state().lastObjectiveRealm = realm - 1;
+    harness.api.state().level = realm * 3 + 2;
+    harness.api.state().activeObjective = null;
+    assert.equal(harness.api.startRealmObjectiveIfNeeded(), true);
+    objectiveTypes.push(harness.api.state().activeObjective.type);
+    harness.api.completeRealmObjective();
+    assert.equal(harness.api.state().activeObjective, null);
+  }
+  assert.deepEqual(objectiveTypes, [
+    'markedHeavy',
+    'survive',
+    'medics',
+    'combo',
+    'defend',
+    'noDamage',
+    'score'
+  ]);
+  harness.dom.window.close();
 });
 
 test('first-run tutorial pauses battle and completes in four steps', () => {
