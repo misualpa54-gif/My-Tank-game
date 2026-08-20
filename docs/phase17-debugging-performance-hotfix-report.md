@@ -159,6 +159,18 @@ The rest of the 5×5 world streams after first paint rather than blocking menu i
 - Ground coverage/height/normal data is checked against the analytic terrain function.
 - Tutorial UI and replay controls are explicitly absent.
 
+## Debugged Android artifact
+
+The Java 21 workflow, full 72-test check, Android unit-test task, debug assembly, and upload succeeded.
+
+- Workflow: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32415329178`
+- APK artifact: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32415329178/artifacts/9423715723`
+- Artifact name: `TankRealms-debug-apk`
+- ZIP contains: `app-debug.apk`
+- Archive size: 3,789,547 bytes (approximately 3.79 MB)
+- GitHub archive SHA-256: `61dd30ed584b05960dd7c64236f8f946214455d768151aee4a8a34920eb85679`
+- Expires: 19 September 2026
+
 ## Deferred work
 
 This hotfix does not start the slim HUD/radar package. That package remains paused until the user reviews the corrected infinite-world APK.
