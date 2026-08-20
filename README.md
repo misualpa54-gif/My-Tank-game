@@ -4,17 +4,17 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phases 1–12 provide the stable offline APK plus optimization, saves, economy, tanks, quality, accessibility, bosses, strategic enemies, objectives, trade-offs and build evolutions. Phase 13 adds permanent mastery and achievements:
+Phases 1–13 provide the stable offline APK plus optimization, saving, economy, tanks, quality, accessibility, guardians, strategic enemies, objectives, evolutions, mastery and achievements. Phase 14 adds a deterministic offline Daily Challenge:
 
-- Verdant Vanguard, Ember Warden and Azure Bastion each track separate kills, score, guardians, level, combo and completed runs;
-- six mastery levels unlock accent stripes, track underglow, antenna beacon, bright projectile trail and a gold mastery crown;
-- the Garage displays each tank’s mastery level and progress;
-- ten offline achievements reward kills, levels, ×3 combo, a flawless guardian, full tank ownership, a maxed tank, runs with all tanks, all biomes and Medic kills;
-- achievement rewards total 2,950 permanent coins and can only be collected once;
-- the Achievements menu shows locked/completed states and rewards;
-- damage from projectiles, artillery and mines contributes to flawless-guardian tracking;
-- mastery records, achievement IDs and lifetime progress are sanitized and saved locally;
-- all previous evolution, objective, guardian, quality, save, garage, portrait, performance, timing, collision, audio, accessibility, offline and Android behavior remains active.
+- the local calendar date creates a fixed modifier, starting biome, biome order, enemy sequence, upgrade choices and objective rotation;
+- Scout Swarm, Heavy Armor, No Regeneration, Double Combo Coins, Sniper Realm and Fast Enemy modifiers rotate by date;
+- daily runs keep the selected tank appearance/mastery cosmetics but disable permanent stat upgrades for equal base balance;
+- a Daily menu shows the modifier, starting biome, local best score/level and attempts;
+- daily enemy and upgrade indexes survive Continue so reopening cannot reroll choices;
+- Try Again restarts the same daily challenge;
+- local records are sanitized and limited to the latest 30 dates;
+- no internet, account, global leaderboard or network permission is added;
+- all previous mastery, achievement, evolution, objective, guardian, quality, save, garage, portrait, performance, timing, collision, audio, accessibility, offline and Android behavior remains active.
 
 Detailed reports are in:
 
@@ -29,8 +29,9 @@ Detailed reports are in:
 - `docs/phase11-strategic-enemies-objectives-report.md`
 - `docs/phase12-upgrade-evolutions-report.md`
 - `docs/phase13-mastery-achievements-report.md`
+- `docs/phase14-offline-daily-challenge-report.md`
 
-The next approved stage is deterministic offline daily challenges, followed by additional game modes. Final-release signing and store work remain separate.
+The next approved stage is additional game modes. Final-release signing and store work remain separate.
 
 ## Project structure
 

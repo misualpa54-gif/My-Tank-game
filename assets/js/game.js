@@ -177,6 +177,15 @@
             { type: 'score', name: 'Score Assault', description: 'Earn 1,000 score during the objective', target: 1000, reward: 225 }
         ];
 
+        const DAILY_MODIFIERS = [
+            { id: 'scoutSwarm', name: 'Scout Swarm', description: 'Enemy sequence strongly favors fast Scout tanks.' },
+            { id: 'heavyArmor', name: 'Heavy Armor Day', description: 'All non-boss enemies begin with 35% more health.' },
+            { id: 'noRegeneration', name: 'No Regeneration', description: 'Repair Nanites and Mobile Repair are unavailable.' },
+            { id: 'doubleComboCoins', name: 'Double Combo Coins', description: 'Combo coin rewards are doubled.' },
+            { id: 'sniperRealm', name: 'Sniper Realm', description: 'Snipers appear more often after the opening levels.' },
+            { id: 'fastEnemies', name: 'Fast Enemy Day', description: 'All non-boss enemies move 20% faster.' }
+        ];
+
         const TANK_DESIGNS = {
             vanguard: {
                 id: 'vanguard',
@@ -317,6 +326,44 @@
         const QUALITY_ORDER = ['low', 'medium', 'high'];
 
         const BASELINE_FPS = 60;
+
+        function hashString(value) {
+            let hash = 2166136261;
+            for (let i = 0; i < value.length; i++) {
+                hash ^= value.charCodeAt(i);
+                hash = Math.imul(hash, 16777619);
+            }
+            return hash >>> 0;
+        }
+
+        function seededUnitValue(seed, index) {
+            let value = (seed + Math.imul(index + 1, 0x6D2B79F5)) >>> 0;
+            value = Math.imul(value ^ value >>> 15, value | 1);
+            value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+            return ((value ^ value >>> 14) >>> 0) / 4294967296;
+        }
+
+        function getLocalDateKey(date = new Date()) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function getDailyDefinition(dateKey = getLocalDateKey()) {
+            const seed = hashString(`tank-realms-${dateKey}`);
+            return {
+                dateKey,
+                seed,
+                modifier: DAILY_MODIFIERS[seed % DAILY_MODIFIERS.length],
+                biomeOffset: (seed >>> 8) % BIOMES.length
+            };
+        }
+
+        function getBiomeIndexForRealm(realmProgress) {
+            const offset = state.isDailyChallenge ? state.dailyBiomeOffset : 0;
+            return (offset + realmProgress) % BIOMES.length;
+        }
 
         function getFrameEquivalentAlpha(alphaAt60Fps, dt) {
             return 1 - Math.pow(1 - alphaAt60Fps, dt * BASELINE_FPS);
@@ -463,6 +510,7 @@
                 tankUpgrades: createDefaultTankUpgradeCollection(),
                 tankMastery: createDefaultMasteryCollection(),
                 achievements: {},
+                dailyRecords: {},
                 lifetimeStats: createDefaultLifetimeStats(),
                 tutorialCompleted: false,
                 settings: {
@@ -540,10 +588,19 @@
             settingsOpen: false,
             garageOpen: false,
             achievementsOpen: false,
+            dailyOpen: false,
             tutorialOpen: false,
             tutorialStep: 0,
             tutorialReturnTarget: 'playing',
             newRunConfirmOpen: false,
+            pendingNewRunMode: 'normal',
+            isDailyChallenge: false,
+            dailyDateKey: '',
+            dailySeed: 0,
+            dailyModifierId: '',
+            dailyEnemyIndex: 0,
+            dailyUpgradeIndex: 0,
+            dailyBiomeOffset: 0,
             runStats: createDefaultRunStats(),
             upgradeTiers: createDefaultUpgradeTiers(),
             evolutions: [],
@@ -984,6 +1041,24 @@
             return Math.min(MASTERY_THRESHOLDS.length, level);
         }
 
+        function sanitizeDailyRecords(savedRecords) {
+            if (!savedRecords || typeof savedRecords !== 'object') return {};
+            const records = {};
+            Object.keys(savedRecords)
+                .filter(key => /^\d{4}-\d{2}-\d{2}$/.test(key))
+                .sort()
+                .slice(-30)
+                .forEach(key => {
+                    const record = savedRecords[key];
+                    records[key] = {
+                        bestScore: clampSavedNumber(record?.bestScore, 0, 1e12, 0, true),
+                        bestLevel: clampSavedNumber(record?.bestLevel, 0, 10000, 0, true),
+                        attempts: clampSavedNumber(record?.attempts, 0, 1e9, 0, true)
+                    };
+                });
+            return records;
+        }
+
         function sanitizeProfile(savedProfile) {
             const safeProfile = createDefaultProfile();
             if (!savedProfile || savedProfile.version !== SAVE_VERSION) return safeProfile;
@@ -1014,6 +1089,7 @@
                 }
             });
             safeProfile.lifetimeStats = sanitizeLifetimeStats(savedProfile.lifetimeStats);
+            safeProfile.dailyRecords = sanitizeDailyRecords(savedProfile.dailyRecords);
             safeProfile.settings.soundEnabled = savedProfile.settings?.soundEnabled === true;
             safeProfile.settings.cameraMode = savedProfile.settings?.cameraMode === 'wide' ? 'wide' : 'follow';
             safeProfile.tutorialCompleted = savedProfile.tutorialCompleted === true;
@@ -1180,6 +1256,39 @@
             });
         }
 
+        function renderDailyChallenge() {
+            const daily = getDailyDefinition();
+            const record = profile.dailyRecords[daily.dateKey] || {
+                bestScore: 0,
+                bestLevel: 0,
+                attempts: 0
+            };
+            document.getElementById('daily-date').textContent = daily.dateKey;
+            document.getElementById('daily-modifier-name').textContent = daily.modifier.name;
+            document.getElementById('daily-modifier-description').textContent =
+                daily.modifier.description;
+            document.getElementById('daily-best-score').textContent =
+                formatCompactNumber(record.bestScore);
+            document.getElementById('daily-best-level').textContent = String(record.bestLevel);
+            document.getElementById('daily-attempts').textContent = String(record.attempts);
+            document.getElementById('daily-start-biome').textContent =
+                BIOMES[daily.biomeOffset].name;
+        }
+
+        function openDailyChallenge() {
+            if (state.gamePhase !== 'menu') return;
+            state.dailyOpen = true;
+            renderDailyChallenge();
+            setScreenVisibility('start-screen', false);
+            setScreenVisibility('daily-screen', true);
+        }
+
+        function closeDailyChallenge() {
+            state.dailyOpen = false;
+            setScreenVisibility('daily-screen', false);
+            setScreenVisibility('start-screen', true);
+        }
+
         function openAchievements() {
             if (state.gamePhase !== 'menu') return;
             state.achievementsOpen = true;
@@ -1252,6 +1361,11 @@
             if (playerHp <= 0) return null;
 
             const level = clampSavedNumber(savedRun.level, 1, 10000, 1, true);
+            const isDailyChallenge = savedRun.isDailyChallenge === true &&
+                /^\d{4}-\d{2}-\d{2}$/.test(savedRun.dailyDateKey || '');
+            const dailyDefinition = isDailyChallenge
+                ? getDailyDefinition(savedRun.dailyDateKey)
+                : null;
             const xpToNext = clampSavedNumber(savedRun.xpToNext, 1, 1e12, 100, true);
             const pendingUpgradeCount = clampSavedNumber(
                 savedRun.pendingUpgradeCount,
@@ -1270,9 +1384,12 @@
                 ? savedRun.enemies.slice(0, 12).flatMap(savedEnemy => {
                     const typeData = ENEMY_TYPES[savedEnemy?.type];
                     if (!typeData) return [];
+                    const dailyHpMultiplier = dailyDefinition?.modifier.id === 'heavyArmor' &&
+                        !typeData.isBoss ? 1.35 : 1;
+                    const maxEnemyHp = typeData.hp * dailyHpMultiplier;
                     return [{
                         type: savedEnemy.type,
-                        hp: clampSavedNumber(savedEnemy.hp, 1, typeData.hp, typeData.hp),
+                        hp: clampSavedNumber(savedEnemy.hp, 1, maxEnemyHp, maxEnemyHp),
                         position: sanitizePosition(savedEnemy.position),
                         rotationY: clampSavedNumber(
                             savedEnemy.rotationY,
@@ -1295,6 +1412,13 @@
                 level,
                 xpToNext,
                 currentBiome: clampSavedNumber(savedRun.currentBiome, 0, BIOMES.length - 1, 0, true),
+                isDailyChallenge,
+                dailyDateKey: dailyDefinition?.dateKey || '',
+                dailySeed: dailyDefinition?.seed || 0,
+                dailyModifierId: dailyDefinition?.modifier.id || '',
+                dailyBiomeOffset: dailyDefinition?.biomeOffset || 0,
+                dailyEnemyIndex: clampSavedNumber(savedRun.dailyEnemyIndex, 0, 1e9, 0, true),
+                dailyUpgradeIndex: clampSavedNumber(savedRun.dailyUpgradeIndex, 0, 1e9, 0, true),
                 realmProgress: clampSavedNumber(savedRun.realmProgress, 0, 10000, 0, true),
                 guardianPending: savedRun.guardianPending === true,
                 activeObjective: sanitizeObjective(savedRun.activeObjective),
@@ -1374,6 +1498,10 @@
                 level: state.level,
                 xpToNext: state.xpToNext,
                 currentBiome: state.currentBiome,
+                isDailyChallenge: state.isDailyChallenge,
+                dailyDateKey: state.dailyDateKey,
+                dailyEnemyIndex: state.dailyEnemyIndex,
+                dailyUpgradeIndex: state.dailyUpgradeIndex,
                 realmProgress: state.realmProgress,
                 guardianPending: state.guardianPending,
                 activeObjective: state.activeObjective ? { ...state.activeObjective } : null,
@@ -2718,6 +2846,10 @@
                 const scale = isPlayer ? 1 : (this.typeData?.size || 1);
 
                 this.hp = isPlayer ? state.playerStats.maxHp : (this.typeData?.hp || 50);
+                if (!isPlayer && !this.typeData?.isBoss &&
+                    state.isDailyChallenge && state.dailyModifierId === 'heavyArmor') {
+                    this.hp *= 1.35;
+                }
                 this.maxHp = this.hp;
                 this.isDead = false;
                 this.lastHealTime = 0;
@@ -3854,9 +3986,10 @@
             renderTutorialStep();
         }
 
-        function requestNewRun() {
+        function requestNewRun(mode = 'normal') {
+            state.pendingNewRunMode = mode;
             if (!cachedActiveRun) {
-                startGame();
+                startGame({ daily: mode === 'daily' });
                 return;
             }
             state.newRunConfirmOpen = true;
@@ -3869,8 +4002,9 @@
         }
 
         function startConfirmedNewRun() {
+            const daily = state.pendingNewRunMode === 'daily';
             closeNewRunConfirmation();
-            startGame();
+            startGame({ daily });
         }
 
         function continueConfirmedRun() {
@@ -3911,6 +4045,7 @@
             state.settingsOpen = false;
             state.garageOpen = false;
             state.achievementsOpen = false;
+            state.dailyOpen = false;
             state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             clearInputState();
@@ -3918,6 +4053,7 @@
             setScreenVisibility('upgrade-choice-screen', false);
             setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
+            setScreenVisibility('daily-screen', false);
             setScreenVisibility('achievements-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('settings-screen', false);
@@ -3941,7 +4077,18 @@
             if (level >= 13) types.push('commander');
             if (level >= 14) types.push('droneCarrier');
             if (level >= 16) types.push('reflector');
-            return types[Math.floor(Math.random() * types.length)];
+            if (!state.isDailyChallenge) {
+                return types[Math.floor(Math.random() * types.length)];
+            }
+            const roll = seededUnitValue(
+                state.dailySeed,
+                state.dailyEnemyIndex++
+            );
+            if (state.dailyModifierId === 'scoutSwarm' && roll < 0.65) return 'scout';
+            if (state.dailyModifierId === 'sniperRealm' && level >= 4 && roll < 0.55) {
+                return 'sniper';
+            }
+            return types[Math.floor(roll * types.length) % types.length];
         }
 
         function getSpawnRateForLevel(level) {
@@ -4041,7 +4188,12 @@
             const requiredLevel = state.realmProgress * 3 + 2;
             if (state.level < requiredLevel) return false;
 
-            const definition = REALM_OBJECTIVES[state.realmProgress % REALM_OBJECTIVES.length];
+            const objectiveOffset = state.isDailyChallenge
+                ? state.dailySeed % REALM_OBJECTIVES.length
+                : 0;
+            const definition = REALM_OBJECTIVES[
+                (objectiveOffset + state.realmProgress) % REALM_OBJECTIVES.length
+            ];
             state.activeObjective = {
                 ...definition,
                 progress: 0,
@@ -4176,7 +4328,9 @@
         function spawnPendingGuardian() {
             if (!state.guardianPending || activeBoss || state.activeObjective ||
                 !player || player.isDead || !state.isPlaying) return null;
-            const guardianType = REALM_GUARDIAN_TYPES[state.realmProgress % REALM_GUARDIAN_TYPES.length];
+            const guardianType = REALM_GUARDIAN_TYPES[
+                state.currentBiome % REALM_GUARDIAN_TYPES.length
+            ];
             const data = ENEMY_TYPES[guardianType];
             const angle = Math.random() * Math.PI * 2;
             const boss = new Tank(data.color, false, guardianType);
@@ -4258,7 +4412,7 @@
             state.guardianPending = false;
             activeBoss = null;
             hideBossUI();
-            loadBiome(state.realmProgress % BIOMES.length);
+            loadBiome(getBiomeIndexForRealm(state.realmProgress));
             showUpgradeNotification(`🏆 Realm cleared!  💰 +${bonusCoins}`);
             playGameSound('unlock');
             triggerHaptic('heavy');
@@ -4292,11 +4446,29 @@
             hideObjectiveUI();
         }
 
-        function startGame() {
+        function startGame(options = {}) {
             clearActiveRunSave();
             clearCombatScene();
 
             const now = clock.getElapsedTime();
+            const dailyDefinition = options.daily ? getDailyDefinition() : null;
+            state.isDailyChallenge = Boolean(dailyDefinition);
+            state.dailyDateKey = dailyDefinition?.dateKey || '';
+            state.dailySeed = dailyDefinition?.seed || 0;
+            state.dailyModifierId = dailyDefinition?.modifier.id || '';
+            state.dailyBiomeOffset = dailyDefinition?.biomeOffset || 0;
+            state.dailyEnemyIndex = 0;
+            state.dailyUpgradeIndex = 0;
+            if (dailyDefinition) {
+                const record = profile.dailyRecords[dailyDefinition.dateKey] || {
+                    bestScore: 0,
+                    bestLevel: 0,
+                    attempts: 0
+                };
+                record.attempts++;
+                profile.dailyRecords[dailyDefinition.dateKey] = record;
+                saveProfile();
+            }
             state.score = 0;
             state.runStats = createDefaultRunStats();
             state.xp = 0;
@@ -4321,9 +4493,9 @@
                 : 'vanguard';
             state.runMasteryLevel = getMasteryLevel(profile.tankMastery[state.runTankId]);
             state.activeBossDamageBaseline = 0;
-            state.runPermanentUpgrades = sanitizePermanentUpgradeTiers(
-                profile.tankUpgrades[state.runTankId]
-            );
+            state.runPermanentUpgrades = state.isDailyChallenge
+                ? createDefaultPermanentUpgradeTiers()
+                : sanitizePermanentUpgradeTiers(profile.tankUpgrades[state.runTankId]);
             state.runBaseStats = getPermanentBaseStats(state.runPermanentUpgrades);
             state.playerStats = getStatsFromUpgradeTiers(
                 state.upgradeTiers,
@@ -4339,18 +4511,20 @@
             state.settingsOpen = false;
             state.garageOpen = false;
             state.achievementsOpen = false;
+            state.dailyOpen = false;
             state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             clearInputState();
 
             const selectedTank = TANK_DESIGNS[state.runTankId];
             player = new Tank(selectedTank.color, true, 'soldier', state.runTankId);
-            loadBiome(0);
+            loadBiome(getBiomeIndexForRealm(0));
             updateHUD();
 
             setScreenVisibility('upgrade-choice-screen', false);
             setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
+            setScreenVisibility('daily-screen', false);
             setScreenVisibility('achievements-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('start-screen', false);
@@ -4379,6 +4553,13 @@
             state.level = savedRun.level;
             state.xpToNext = savedRun.xpToNext;
             state.currentBiome = savedRun.currentBiome;
+            state.isDailyChallenge = savedRun.isDailyChallenge;
+            state.dailyDateKey = savedRun.dailyDateKey;
+            state.dailySeed = savedRun.dailySeed;
+            state.dailyModifierId = savedRun.dailyModifierId;
+            state.dailyBiomeOffset = savedRun.dailyBiomeOffset;
+            state.dailyEnemyIndex = savedRun.dailyEnemyIndex;
+            state.dailyUpgradeIndex = savedRun.dailyUpgradeIndex;
             state.realmProgress = savedRun.realmProgress;
             state.guardianPending = savedRun.guardianPending;
             state.activeObjective = savedRun.activeObjective
@@ -4405,6 +4586,7 @@
             state.settingsOpen = false;
             state.garageOpen = false;
             state.achievementsOpen = false;
+            state.dailyOpen = false;
             state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             state.targetEnemy = null;
@@ -4454,6 +4636,7 @@
 
             setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
+            setScreenVisibility('daily-screen', false);
             setScreenVisibility('achievements-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('start-screen', false);
@@ -4481,7 +4664,10 @@
         function shuffleUpgrades(upgrades) {
             const shuffled = [...upgrades];
             for (let i = shuffled.length - 1; i > 0; i--) {
-                const randomIndex = Math.floor(Math.random() * (i + 1));
+                const randomValue = state.isDailyChallenge
+                    ? seededUnitValue(state.dailySeed ^ 0xA5A5A5A5, state.dailyUpgradeIndex++)
+                    : Math.random();
+                const randomIndex = Math.floor(randomValue * (i + 1));
                 [shuffled[i], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[i]];
             }
             return shuffled;
@@ -4490,7 +4676,10 @@
         function getAvailableUpgrades() {
             return UPGRADE_DEFINITIONS.filter(upgrade =>
                 state.level >= upgrade.minLevel &&
-                state.upgradeTiers[upgrade.id] < upgrade.maxTier
+                state.upgradeTiers[upgrade.id] < upgrade.maxTier &&
+                !(state.isDailyChallenge &&
+                    state.dailyModifierId === 'noRegeneration' &&
+                    upgrade.id === 'regen')
             );
         }
 
@@ -4677,7 +4866,10 @@
             state.comboMultiplier = getComboMultiplier(state.comboCount);
             const scoreReward = Math.floor(basePoints * state.comboMultiplier);
             const baseCoins = Math.max(1, Math.floor(basePoints / 10));
-            const coinReward = Math.max(1, Math.floor(baseCoins * state.comboMultiplier));
+            let coinReward = Math.max(1, Math.floor(baseCoins * state.comboMultiplier));
+            if (state.isDailyChallenge && state.dailyModifierId === 'doubleComboCoins') {
+                coinReward *= 2;
+            }
             state.score += scoreReward;
             state.runStats.kills++;
             state.runStats.highestCombo = Math.max(
@@ -4831,8 +5023,10 @@
         }
 
         function updateCommanderBuffs() {
+            const dailySpeedMultiplier = state.isDailyChallenge &&
+                state.dailyModifierId === 'fastEnemies' ? 1.2 : 1;
             enemies.forEach(enemy => {
-                enemy.speedMultiplier = 1;
+                enemy.speedMultiplier = dailySpeedMultiplier;
                 enemy.damageMultiplier = 1;
             });
             enemies.filter(enemy => enemy.type === 'commander' && !enemy.isDead)
@@ -4840,7 +5034,7 @@
                     enemies.forEach(ally => {
                         if (ally === commander || ally.isDead || ally.typeData?.isBoss) return;
                         if (ally.mesh.position.distanceTo(commander.mesh.position) < 16) {
-                            ally.speedMultiplier = 1.18;
+                            ally.speedMultiplier = dailySpeedMultiplier * 1.18;
                             ally.damageMultiplier = 1.2;
                         }
                     });
@@ -5403,6 +5597,19 @@
             return `${minutes}:${remainder}`;
         }
 
+        function updateDailyRecord() {
+            if (!state.isDailyChallenge || !state.dailyDateKey) return;
+            const record = profile.dailyRecords[state.dailyDateKey] || {
+                bestScore: 0,
+                bestLevel: 0,
+                attempts: 1
+            };
+            record.bestScore = Math.max(record.bestScore, Math.floor(state.score));
+            record.bestLevel = Math.max(record.bestLevel, Math.floor(state.level));
+            profile.dailyRecords[state.dailyDateKey] = record;
+            saveProfile();
+        }
+
         function renderRunResults() {
             const isScoreRecord = state.score > profile.bestScore;
             const isLevelRecord = state.level > profile.bestLevel;
@@ -5421,6 +5628,12 @@
             const recordMessages = [];
             if (isScoreRecord) recordMessages.push('New best score!');
             if (isLevelRecord) recordMessages.push('New best level!');
+            if (state.isDailyChallenge) {
+                const dailyRecord = profile.dailyRecords[state.dailyDateKey];
+                if (!dailyRecord || state.score > dailyRecord.bestScore) {
+                    recordMessages.push('New daily best!');
+                }
+            }
             document.getElementById('result-record').textContent = recordMessages.join(' • ');
         }
 
@@ -5432,6 +5645,7 @@
             state.settingsOpen = false;
             state.garageOpen = false;
             state.achievementsOpen = false;
+            state.dailyOpen = false;
             state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             state.comboCount = 0;
@@ -5443,6 +5657,7 @@
             state.currentUpgradeChoices = [];
             clearInputState();
             renderRunResults();
+            updateDailyRecord();
             finalizeRunMastery();
             updateBestProfile();
             clearActiveRunSave();
@@ -5451,6 +5666,7 @@
             setScreenVisibility('upgrade-choice-screen', false);
             setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
+            setScreenVisibility('daily-screen', false);
             setScreenVisibility('achievements-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('settings-screen', false);
@@ -5660,6 +5876,22 @@
             openAchievements();
         });
 
+        document.getElementById('btn-daily').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openDailyChallenge();
+        });
+
+        document.getElementById('btn-close-daily').addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeDailyChallenge();
+        });
+
+        document.getElementById('btn-start-daily').addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeDailyChallenge();
+            requestNewRun('daily');
+        });
+
         document.getElementById('btn-close-achievements').addEventListener('click', (e) => {
             e.stopPropagation();
             closeAchievements();
@@ -5702,7 +5934,7 @@
 
         document.getElementById('btn-restart').addEventListener('click', (e) => {
             e.stopPropagation();
-            startGame();
+            startGame({ daily: state.isDailyChallenge });
         });
 
         document.getElementById('btn-results-garage').addEventListener('click', (e) => {
@@ -5826,6 +6058,10 @@
                     return true;
                 }
                 if (state.tutorialOpen) return true;
+                if (state.dailyOpen) {
+                    closeDailyChallenge();
+                    return true;
+                }
                 if (state.achievementsOpen) {
                     closeAchievements();
                     return true;

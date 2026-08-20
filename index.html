@@ -95,6 +95,7 @@
         <button type="button" class="btn btn-continue" id="btn-continue">Continue Run</button>
         <button type="button" class="btn btn-garage" id="btn-garage">Garage</button>
         <button type="button" class="btn btn-achievements" id="btn-achievements">Achievements</button>
+        <button type="button" class="btn btn-daily" id="btn-daily">Daily Challenge</button>
         <button type="button" class="btn" id="btn-start">Start Adventure</button>
         <div class="game-info">
             Lower left: Move • Lower right: Hold to fire<br>
@@ -152,6 +153,27 @@
     </div>
 
 
+
+    <div id="daily-screen" class="screen hidden">
+        <div class="daily-panel">
+            <div class="tutorial-step-count">Offline Daily Challenge</div>
+            <h1 id="daily-title">Today’s Challenge</h1>
+            <p id="daily-date">Date</p>
+            <div class="daily-modifier">
+                <strong id="daily-modifier-name">Modifier</strong>
+                <span id="daily-modifier-description">Description</span>
+            </div>
+            <div class="results-grid daily-records">
+                <div><span>Best score</span><strong id="daily-best-score">0</strong></div>
+                <div><span>Best level</span><strong id="daily-best-level">0</strong></div>
+                <div><span>Attempts</span><strong id="daily-attempts">0</strong></div>
+                <div><span>Start biome</span><strong id="daily-start-biome">Forest</strong></div>
+            </div>
+            <p>Enemy order and upgrade choices are fixed for this date. No internet or global leaderboard.</p>
+            <button type="button" class="btn btn-daily" id="btn-start-daily">Start Daily</button>
+            <button type="button" class="btn" id="btn-close-daily">Back to Menu</button>
+        </div>
+    </div>
 
     <div id="achievements-screen" class="screen hidden">
         <div class="achievements-panel">

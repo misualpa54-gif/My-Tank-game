@@ -149,6 +149,11 @@ function createHarness(storageSeed = {}) {
       ].filter(Boolean),
       startGame,
       continueSavedRun,
+      getDailyDefinition,
+      renderDailyChallenge,
+      openDailyChallenge,
+      closeDailyChallenge,
+      getEnemyTypeForLevel,
       saveActiveRun,
       clearActiveRunSave,
       sanitizeProfile,
@@ -917,6 +922,80 @@ test('one saved realm objective is active at a time', () => {
     'noDamage',
     'score'
   ]);
+  harness.dom.window.close();
+});
+
+test('daily challenge is deterministic across independent sessions', () => {
+  const first = createHarness();
+  const second = createHarness();
+  first.api.profile().tankUpgrades.vanguard.damage = 5;
+  first.api.startGame({ daily: true });
+  second.api.startGame({ daily: true });
+
+  assert.equal(first.api.state().isDailyChallenge, true);
+  assert.equal(first.api.state().dailyDateKey, second.api.state().dailyDateKey);
+  assert.equal(first.api.state().dailyModifierId, second.api.state().dailyModifierId);
+  assert.equal(first.api.state().currentBiome, second.api.state().currentBiome);
+  assert.equal(first.api.state().runBaseStats.damage, 100);
+
+  const firstSequence = Array.from({ length: 12 }, () =>
+    first.api.getEnemyTypeForLevel(10)
+  );
+  const secondSequence = Array.from({ length: 12 }, () =>
+    second.api.getEnemyTypeForLevel(10)
+  );
+  assert.deepEqual(firstSequence, secondSequence);
+
+  first.api.addXP(100);
+  second.api.addXP(100);
+  assert.deepEqual(
+    Array.from(first.api.state().currentUpgradeChoices),
+    Array.from(second.api.state().currentUpgradeChoices)
+  );
+  assert.equal(
+    first.api.profile().dailyRecords[first.api.state().dailyDateKey].attempts,
+    1
+  );
+  first.dom.window.close();
+  second.dom.window.close();
+});
+
+test('daily challenge survives Continue with deterministic indexes', () => {
+  const first = createHarness();
+  first.api.startGame({ daily: true });
+  for (let i = 0; i < 5; i++) first.api.getEnemyTypeForLevel(8);
+  first.api.saveActiveRun();
+  const savedRun = first.window.localStorage.getItem('tank_realms_active_run_v1');
+  const expectedIndex = first.api.state().dailyEnemyIndex;
+  const expectedModifier = first.api.state().dailyModifierId;
+  first.dom.window.close();
+
+  const second = createHarness({ tank_realms_active_run_v1: savedRun });
+  assert.equal(second.api.continueSavedRun(), true);
+  assert.equal(second.api.state().isDailyChallenge, true);
+  assert.equal(second.api.state().dailyEnemyIndex, expectedIndex);
+  assert.equal(second.api.state().dailyModifierId, expectedModifier);
+  second.dom.window.close();
+});
+
+test('daily best score and level save locally', () => {
+  const harness = createHarness();
+  harness.api.startGame({ daily: true });
+  const dateKey = harness.api.state().dailyDateKey;
+  harness.api.state().score = 7654;
+  harness.api.state().level = 12;
+  harness.api.endGame();
+  assert.equal(harness.api.profile().dailyRecords[dateKey].bestScore, 7654);
+  assert.equal(harness.api.profile().dailyRecords[dateKey].bestLevel, 12);
+  harness.api.renderDailyChallenge();
+  assert.equal(
+    harness.window.document.getElementById('daily-best-score').textContent,
+    '7.7K'
+  );
+  assert.equal(
+    harness.window.document.getElementById('daily-best-level').textContent,
+    '12'
+  );
   harness.dom.window.close();
 });
 
