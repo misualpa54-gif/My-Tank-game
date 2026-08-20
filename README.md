@@ -4,17 +4,18 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phases 1–8 provide the stable offline APK, optimization, consistent combat, portrait controls, continuation, choice upgrades, economy, garage, tanks, and quality modes. Phase 9 completes the recommended polish and balance foundation:
+Phases 1–9 provide the stable offline APK, optimization, consistent combat, portrait controls, continuation, upgrades, economy, garage, quality, audio, accessibility, tutorial, results, and balance foundation. Phase 10 adds Realm Guardian progression:
 
-- offline procedural arcade sci-fi effects cover three player weapons, enemies, impacts, explosions, damage, combos, coins, upgrades, garage actions, UI, and game over;
-- official optional Android haptics are rate-limited and saved;
-- effects volume, camera-shake mode, reduced flashes, Left-handed controls, and Large HUD are available in Settings;
-- a four-step first-run tutorial follows the selected handedness and can be replayed;
-- living saves are protected by Continue, Replace, and Cancel confirmation;
-- defeat shows coins, kills, best combo, survival time, tank, upgrade count, and new records;
-- local run statistics persist through Continue and provide data for future economy tuning;
-- armor now uses diminishing protection instead of direct subtraction, preventing armor/regeneration invulnerability;
-- all previous quality, saving, garage, portrait, performance, consistency, offline, and Android behavior remains active.
+- every three levels prepares the guardian of the current biome instead of changing realm immediately;
+- normal spawning pauses until the guardian is defeated;
+- six unique guardians use spread cannons, heavy shots, charging, strafing, healing, summons, and crystal patterns;
+- a warning overlay, procedural warning sound/haptic, rotating boss marker, and boss health bar clearly present each encounter;
+- boss attacks use elapsed-time cooldowns and swept projectiles;
+- guardian minions obey the existing 12-enemy cap;
+- score, controlled XP, combo coins, and bonus realm coins reward each victory;
+- biome progression unlocks only after guardian defeat and cannot be skipped by large XP gains;
+- active guardian type, health, position, realm progress, and pending state survive Continue/reload;
+- all previous quality, saving, garage, portrait, performance, consistency, audio, accessibility, offline, and Android behavior remains active.
 
 Detailed reports are in:
 
@@ -25,8 +26,9 @@ Detailed reports are in:
 - `docs/phase7-garage-economy-report.md`
 - `docs/phase8-quality-report.md`
 - `docs/phase9-polish-balance-report.md`
+- `docs/phase10-realm-guardians-report.md`
 
-The next approved content stage is Realm Guardian bosses, followed by strategic enemies, upgrade evolutions, mastery/achievements, daily challenges, and extra modes. Final-release signing and store work remain separate.
+The next approved content stage is strategic enemies and realm objectives, followed by upgrade evolutions, mastery/achievements, daily challenges, and extra modes. Final-release signing and store work remain separate.
 
 ## Project structure
 

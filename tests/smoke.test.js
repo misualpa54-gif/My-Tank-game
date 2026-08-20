@@ -127,6 +127,7 @@ function createHarness(storageSeed = {}) {
       profile: () => profile,
       cachedActiveRun: () => cachedActiveRun,
       player: () => player,
+      activeBoss: () => activeBoss,
       enemies: () => enemies,
       renderer: () => renderer,
       scene: () => scene,
@@ -156,6 +157,11 @@ function createHarness(storageSeed = {}) {
       applyUpgradeChoice,
       awardEnemyKill,
       updateCombo,
+      queueGuardianIfNeeded,
+      spawnPendingGuardian,
+      handleGuardianDefeat,
+      updateBossHUD,
+      guardianTypes: () => REALM_GUARDIAN_TYPES,
       openGarage,
       closeGarage,
       renderGarage,
@@ -393,6 +399,37 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(
       document.getElementById('upgrade-choice-screen').classList.contains('hidden'),
       true
+    );
+  });
+
+  await t.test('gates realm transitions behind biome guardians', () => {
+    api.startGame();
+    api.addXP(100);
+    api.applyUpgradeChoice(api.state().currentUpgradeChoices[0]);
+    api.addXP(140);
+    assert.equal(api.state().level, 3);
+    assert.equal(api.state().currentBiome, 0);
+    assert.equal(api.state().guardianPending, true);
+    api.applyUpgradeChoice(api.state().currentUpgradeChoices[0]);
+
+    const boss = api.activeBoss();
+    assert.ok(boss);
+    assert.equal(boss.type, 'forestGuardian');
+    assert.equal(api.guardianTypes().length, 6);
+    assert.equal(
+      document.getElementById('boss-hud').classList.contains('show'),
+      true
+    );
+    const coinsBeforeBonus = api.profile().coins;
+    boss.takeDamage(1e9);
+    assert.equal(api.handleGuardianDefeat(boss), 100);
+    assert.equal(api.activeBoss(), null);
+    assert.equal(api.state().realmProgress, 1);
+    assert.equal(api.state().currentBiome, 1);
+    assert.equal(api.profile().coins, coinsBeforeBonus + 100);
+    assert.equal(
+      document.getElementById('boss-hud').classList.contains('show'),
+      false
     );
   });
 
@@ -690,6 +727,29 @@ test('pending upgrade choices survive a page reload', () => {
   assert.equal(
     secondSession.window.document.querySelectorAll('.upgrade-choice-card').length,
     3
+  );
+  secondSession.dom.window.close();
+});
+
+test('active guardian survives a complete page reload', () => {
+  const firstSession = createHarness();
+  firstSession.api.startGame();
+  firstSession.api.state().level = 3;
+  firstSession.api.queueGuardianIfNeeded();
+  const firstBoss = firstSession.api.spawnPendingGuardian();
+  firstBoss.hp = 321;
+  firstSession.api.saveActiveRun();
+  const savedRun = firstSession.window.localStorage.getItem('tank_realms_active_run_v1');
+  firstSession.dom.window.close();
+
+  const secondSession = createHarness({ tank_realms_active_run_v1: savedRun });
+  assert.equal(secondSession.api.continueSavedRun(), true);
+  assert.ok(secondSession.api.activeBoss());
+  assert.equal(secondSession.api.activeBoss().type, 'forestGuardian');
+  assert.equal(secondSession.api.activeBoss().hp, 321);
+  assert.equal(
+    secondSession.window.document.getElementById('boss-hud').classList.contains('show'),
+    true
   );
   secondSession.dom.window.close();
 });

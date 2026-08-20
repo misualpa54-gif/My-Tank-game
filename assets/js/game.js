@@ -143,8 +143,22 @@
             heavy: { name: "Heavy", color: 0x78350f, hp: 120, speed: 0.5, damage: 25, fireRate: 0.25, size: 1.5, points: 200, desc: "Slow but deadly" },
             sniper: { name: "Sniper", color: 0x7c3aed, hp: 35, speed: 0.6, damage: 30, fireRate: 0.15, size: 0.9, points: 175, desc: "Long range threat" },
             healer: { name: "Medic", color: 0x22c55e, hp: 60, speed: 0.8, damage: 5, fireRate: 0.3, size: 0.85, points: 150, healAmount: 8, desc: "Heals allies" },
-            berserker: { name: "Berserker", color: 0xec4899, hp: 80, speed: 1.3, damage: 18, fireRate: 0.7, size: 1.2, points: 250, desc: "Aggressive charger" }
+            berserker: { name: "Berserker", color: 0xec4899, hp: 80, speed: 1.3, damage: 18, fireRate: 0.7, size: 1.2, points: 250, desc: "Aggressive charger" },
+            forestGuardian: { name: "Rootbound Guardian", color: 0x166534, hp: 500, speed: 0.55, damage: 14, fireRate: 0, size: 1.9, points: 800, xpReward: 180, bossCoins: 100, isBoss: true, behavior: 'forest', attackInterval: 1.6, desc: "Guardian of the enchanted forest" },
+            frozenGuardian: { name: "Frozen Fortress", color: 0x93c5fd, hp: 650, speed: 0.35, damage: 22, fireRate: 0, size: 2.1, points: 1000, xpReward: 220, bossCoins: 140, isBoss: true, behavior: 'frozen', attackInterval: 2.2, desc: "An armored fortress of ice" },
+            volcanicGuardian: { name: "Volcanic Behemoth", color: 0x9a3412, hp: 700, speed: 0.8, damage: 18, fireRate: 0, size: 2.0, points: 1200, xpReward: 260, bossCoins: 180, isBoss: true, behavior: 'volcanic', attackInterval: 1.8, desc: "A charging engine of fire" },
+            desertGuardian: { name: "Desert Mirage", color: 0xeab308, hp: 560, speed: 1.0, damage: 16, fireRate: 0, size: 1.75, points: 1400, xpReward: 300, bossCoins: 220, isBoss: true, behavior: 'desert', attackInterval: 1.15, desc: "A swift guardian of the dunes" },
+            swampGuardian: { name: "Swamp Colossus", color: 0x3f6212, hp: 780, speed: 0.45, damage: 17, fireRate: 0, size: 2.15, points: 1600, xpReward: 340, bossCoins: 260, isBoss: true, behavior: 'swamp', attackInterval: 2.0, desc: "A self-repairing swamp colossus" },
+            crystalGuardian: { name: "Crystal Core", color: 0x4f46e5, hp: 950, speed: 0.25, damage: 20, fireRate: 0, size: 2.2, points: 2000, xpReward: 400, bossCoins: 350, isBoss: true, behavior: 'crystal', attackInterval: 2.4, desc: "The final rotating crystal guardian" }
         };
+        const REALM_GUARDIAN_TYPES = [
+            'forestGuardian',
+            'frozenGuardian',
+            'volcanicGuardian',
+            'desertGuardian',
+            'swampGuardian',
+            'crystalGuardian'
+        ];
 
         const TANK_DESIGNS = {
             vanguard: {
@@ -390,6 +404,8 @@
             level: 1,
             xpToNext: 100,
             currentBiome: 0,
+            realmProgress: 0,
+            guardianPending: false,
             lastFireTime: 0,
             lastSpawnTime: 0,
             lastRegenTime: 0,
@@ -436,7 +452,8 @@
 
         // Three.js Globals
         let scene, camera, renderer, clock;
-        let player, bullets = [], enemies = [], particles = [], environmentObjects = [];
+        let player, activeBoss = null;
+        let bullets = [], enemies = [], particles = [], environmentObjects = [];
         let ambientLight, dirLight, hemisphereLight;
         let groundMesh, waterMesh, lavaMeshes = [];
         let environmentParticles = [];
@@ -928,6 +945,8 @@
                 level,
                 xpToNext,
                 currentBiome: clampSavedNumber(savedRun.currentBiome, 0, BIOMES.length - 1, 0, true),
+                realmProgress: clampSavedNumber(savedRun.realmProgress, 0, 10000, 0, true),
+                guardianPending: savedRun.guardianPending === true,
                 upgradeTiers,
                 runTankId,
                 runPermanentUpgrades,
@@ -994,6 +1013,8 @@
                 level: state.level,
                 xpToNext: state.xpToNext,
                 currentBiome: state.currentBiome,
+                realmProgress: state.realmProgress,
+                guardianPending: state.guardianPending,
                 upgradeTiers: { ...state.upgradeTiers },
                 runTankId: state.runTankId,
                 runPermanentUpgrades: { ...state.runPermanentUpgrades },
@@ -2294,6 +2315,8 @@
                 this.maxHp = this.hp;
                 this.isDead = false;
                 this.lastHealTime = 0;
+                this.nextBossAttackTime = 0;
+                this.nextBossSpecialTime = 0;
 
                 // Physics-based animation properties
                 this.velocity = new THREE.Vector3();
@@ -2477,6 +2500,35 @@
                     }
                 }
 
+                if (this.typeData?.isBoss) {
+                    const bossAccent = new THREE.MeshBasicMaterial({
+                        color: 0xff4444,
+                        transparent: true,
+                        opacity: 0.72,
+                        side: THREE.DoubleSide
+                    });
+                    const bossRing = new THREE.Mesh(
+                        new THREE.RingGeometry(2.4 * scale, 2.7 * scale, 40),
+                        bossAccent
+                    );
+                    bossRing.rotation.x = -Math.PI / 2;
+                    bossRing.position.y = 0.12;
+                    this.mesh.add(bossRing);
+                    this.bossIndicator = bossRing;
+
+                    const beacon = new THREE.Mesh(
+                        new THREE.OctahedronGeometry(0.28 * scale),
+                        new THREE.MeshStandardMaterial({
+                            color: 0xff6666,
+                            emissive: 0xff2222,
+                            emissiveIntensity: 0.9,
+                            roughness: 0.2
+                        })
+                    );
+                    beacon.position.set(0, 2.75 * scale, -0.2 * scale);
+                    this.mesh.add(beacon);
+                }
+
                 // Player indicator ring
                 if (isPlayer) {
                     const ringGeo = new THREE.RingGeometry(2.5, 2.8, 32);
@@ -2639,6 +2691,11 @@
                     this.indicator.rotation.z += dt * 0.4;
                     this.indicator.material.opacity = 0.5 + Math.sin(clock.getElapsedTime() * 2) * 0.2;
                 }
+                if (this.bossIndicator) {
+                    this.bossIndicator.rotation.z -= dt * 0.55;
+                    this.bossIndicator.material.opacity =
+                        0.58 + Math.sin(clock.getElapsedTime() * 3) * 0.14;
+                }
             }
         }
 
@@ -2741,7 +2798,7 @@
             if (bullet) releaseBulletVisual(bullet);
         }
 
-        function shoot(source) {
+        function shoot(source, options = {}) {
             // Recoil animation with smooth return
             const originalZ = source.barrel.position.z;
             source.barrel.position.z -= 0.5;
@@ -2769,8 +2826,9 @@
             );
             if (source.isPlayer) triggerHaptic('light');
 
-            const shotCount = source.isPlayer && state.playerStats.multishot > 0 ? 3 : 1;
-            const spreadAngle = 0.12;
+            const shotCount = options.shotCount ??
+                (source.isPlayer && state.playerStats.multishot > 0 ? 3 : 1);
+            const spreadAngle = options.spreadAngle ?? 0.12;
 
             for (let i = 0; i < shotCount; i++) {
                 const playerDesign = source.isPlayer
@@ -2795,7 +2853,7 @@
                 dir.applyQuaternion(source.turretPivot.getWorldQuaternion(new THREE.Quaternion()));
 
                 if (shotCount > 1) {
-                    const angle = (i - 1) * spreadAngle;
+                    const angle = (i - (shotCount - 1) / 2) * spreadAngle;
                     dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
                 }
 
@@ -2803,12 +2861,13 @@
 
                 bulletGroup.lookAt(bulletGroup.position.clone().add(dir));
 
-                const damage = source.isPlayer
+                const baseShotDamage = source.isPlayer
                     ? CONFIG.baseDamage * (state.playerStats.damage / 100)
                     : (ENEMY_TYPES[source.type]?.damage || 12);
+                const damage = baseShotDamage * (options.damageMultiplier ?? 1);
 
                 bulletGroup.userData = {
-                    vel: dir.multiplyScalar(CONFIG.bulletSpeed),
+                    vel: dir.multiplyScalar(options.bulletSpeed ?? CONFIG.bulletSpeed),
                     isPlayer: source.isPlayer,
                     damage: damage,
                     life: 3,
@@ -3300,6 +3359,137 @@
             return baseSpawnRate / (1 + 0.1 * difficultyMultiplier);
         }
 
+        function updateBossHUD() {
+            const bossHud = document.getElementById('boss-hud');
+            const visible = Boolean(activeBoss && !activeBoss.isDead);
+            bossHud.classList.toggle('show', visible);
+            if (!visible) return;
+            const hp = Math.max(0, activeBoss.hp);
+            const hpPercent = Math.max(0, Math.min(100, hp / activeBoss.maxHp * 100));
+            document.getElementById('boss-name').textContent = activeBoss.typeData.name;
+            document.getElementById('boss-health-fill').style.width = `${hpPercent}%`;
+            document.getElementById('boss-health-text').textContent =
+                `${Math.ceil(hp)} / ${Math.ceil(activeBoss.maxHp)}`;
+        }
+
+        function hideBossUI() {
+            document.getElementById('boss-hud').classList.remove('show');
+            document.getElementById('boss-warning').classList.remove('show');
+        }
+
+        function queueGuardianIfNeeded() {
+            const requiredLevel = (state.realmProgress + 1) * 3;
+            if (state.level >= requiredLevel && !activeBoss && !state.guardianPending) {
+                state.guardianPending = true;
+            }
+        }
+
+        function spawnBossMinion(type, boss) {
+            if (enemies.filter(enemy => !enemy.isDead).length >= 12) return;
+            const angle = Math.random() * Math.PI * 2;
+            const enemy = new Tank(ENEMY_TYPES[type].color, false, type);
+            enemy.mesh.position.set(
+                Math.max(-42, Math.min(42, boss.mesh.position.x + Math.cos(angle) * 7)),
+                0,
+                Math.max(-42, Math.min(42, boss.mesh.position.z + Math.sin(angle) * 7))
+            );
+            enemy.move(0, new THREE.Vector2(0, 0));
+            enemies.push(enemy);
+        }
+
+        function spawnPendingGuardian() {
+            if (!state.guardianPending || activeBoss || !player || !state.isPlaying) return null;
+            const guardianType = REALM_GUARDIAN_TYPES[state.realmProgress % REALM_GUARDIAN_TYPES.length];
+            const data = ENEMY_TYPES[guardianType];
+            const angle = Math.random() * Math.PI * 2;
+            const boss = new Tank(data.color, false, guardianType);
+            boss.mesh.position.set(Math.cos(angle) * 36, 0, Math.sin(angle) * 36);
+            boss.move(0, new THREE.Vector2(0, 0));
+            const now = clock.getElapsedTime();
+            boss.nextBossAttackTime = now + 1.2;
+            boss.nextBossSpecialTime = now + 6;
+            enemies.push(boss);
+            activeBoss = boss;
+            state.guardianPending = false;
+
+            document.getElementById('boss-warning-name').textContent = data.name;
+            document.getElementById('boss-warning').classList.add('show');
+            setTimeout(() => document.getElementById('boss-warning').classList.remove('show'), 2200);
+            updateBossHUD();
+            playGameSound('bossWarning');
+            triggerHaptic('heavy');
+            saveActiveRun();
+            return boss;
+        }
+
+        function updateBossAI(boss, dt, toPlayer, distance) {
+            const behavior = boss.typeData.behavior;
+            const towardPlayer = new THREE.Vector2(toPlayer.x, toPlayer.z).normalize();
+
+            if (behavior === 'volcanic' || behavior === 'forest' || behavior === 'swamp') {
+                if (distance > 16) boss.move(dt, towardPlayer);
+            } else if (behavior === 'desert') {
+                if (distance > 25) boss.move(dt, towardPlayer);
+                else if (distance < 13) boss.move(dt, towardPlayer.clone().multiplyScalar(-1));
+                else boss.move(dt, new THREE.Vector2(-towardPlayer.y, towardPlayer.x));
+            } else if (behavior === 'frozen' && distance > 27) {
+                boss.move(dt, towardPlayer);
+            }
+
+            boss.aimAt(player.mesh.position, dt);
+            const now = clock.getElapsedTime();
+            if (now >= boss.nextBossAttackTime) {
+                if (behavior === 'forest') {
+                    shoot(boss, { shotCount: 3, spreadAngle: 0.16 });
+                } else if (behavior === 'frozen') {
+                    shoot(boss, { damageMultiplier: 1.35, bulletSpeed: 46 });
+                } else if (behavior === 'volcanic') {
+                    shoot(boss, { shotCount: 5, spreadAngle: 0.14 });
+                } else if (behavior === 'desert') {
+                    shoot(boss, { shotCount: 3, spreadAngle: 0.07, bulletSpeed: 70 });
+                } else if (behavior === 'swamp') {
+                    shoot(boss, { shotCount: 3, spreadAngle: 0.12 });
+                } else {
+                    shoot(boss, { shotCount: 7, spreadAngle: 0.13, bulletSpeed: 55 });
+                }
+                boss.nextBossAttackTime = now + boss.typeData.attackInterval;
+            }
+
+            if (now >= boss.nextBossSpecialTime) {
+                if (behavior === 'forest') {
+                    spawnBossMinion('scout', boss);
+                    spawnBossMinion('scout', boss);
+                } else if (behavior === 'swamp') {
+                    boss.heal(Math.max(1, boss.maxHp * 0.025));
+                    spawnBossMinion('healer', boss);
+                } else if (behavior === 'desert') {
+                    spawnBossMinion('scout', boss);
+                }
+                boss.nextBossSpecialTime = now + 7;
+            }
+            updateBossHUD();
+        }
+
+        function handleGuardianDefeat(boss) {
+            if (!boss?.typeData?.isBoss || boss !== activeBoss) return 0;
+            const bonusCoins = boss.typeData.bossCoins;
+            profile.coins += bonusCoins;
+            state.runStats.coinsEarned += bonusCoins;
+            state.realmProgress++;
+            state.guardianPending = false;
+            activeBoss = null;
+            hideBossUI();
+            loadBiome(state.realmProgress % BIOMES.length);
+            showUpgradeNotification(`🏆 Realm cleared!  💰 +${bonusCoins}`);
+            playGameSound('unlock');
+            triggerHaptic('heavy');
+            saveProfile();
+            queueGuardianIfNeeded();
+            if (state.gamePhase === 'playing') spawnPendingGuardian();
+            saveActiveRun();
+            return bonusCoins;
+        }
+
         function clearCombatScene() {
             removeAndDisposeObjects([
                 player ? player.mesh : null,
@@ -3308,8 +3498,10 @@
             while (bullets.length > 0) releaseBulletAt(bullets.length - 1);
             removeAndDisposeObjects(particles.map(particle => particle.mesh));
             player = null;
+            activeBoss = null;
             enemies = [];
             particles = [];
+            hideBossUI();
         }
 
         function startGame() {
@@ -3322,6 +3514,8 @@
             state.xp = 0;
             state.level = 1;
             state.xpToNext = 100;
+            state.realmProgress = 0;
+            state.guardianPending = false;
             state.isPlaying = true;
             state.gamePhase = 'playing';
             state.lastFireTime = now - CONFIG.fireRate;
@@ -3389,6 +3583,8 @@
             state.level = savedRun.level;
             state.xpToNext = savedRun.xpToNext;
             state.currentBiome = savedRun.currentBiome;
+            state.realmProgress = savedRun.realmProgress;
+            state.guardianPending = savedRun.guardianPending;
             state.upgradeTiers = { ...savedRun.upgradeTiers };
             state.runTankId = savedRun.runTankId;
             state.runPermanentUpgrades = { ...savedRun.runPermanentUpgrades };
@@ -3442,6 +3638,12 @@
                 enemy.mesh.rotation.y = savedEnemy.rotationY;
                 enemy.move(0, new THREE.Vector2(0, 0));
                 enemies.push(enemy);
+                if (enemy.typeData?.isBoss) {
+                    activeBoss = enemy;
+                    const bossNow = clock.getElapsedTime();
+                    enemy.nextBossAttackTime = bossNow + 1;
+                    enemy.nextBossSpecialTime = bossNow + 5;
+                }
             });
 
             setScreenVisibility('tutorial-screen', false);
@@ -3453,6 +3655,7 @@
             setScreenVisibility('pause-screen', false);
             updateHUD();
             updateComboIndicator();
+            updateBossHUD();
 
             if (state.pendingUpgradeCount > 0) {
                 beginNextUpgradeChoice(state.currentUpgradeChoices);
@@ -3460,6 +3663,7 @@
                 setScreenVisibility('upgrade-choice-screen', false);
                 setPauseUIVisible(true);
                 syncHUDControls();
+                spawnPendingGuardian();
                 saveActiveRun();
                 if (!profile.tutorialCompleted) openTutorial('playing');
             }
@@ -3517,6 +3721,8 @@
             setPauseUIVisible(true);
             syncHUDControls();
             updateHUD();
+            queueGuardianIfNeeded();
+            spawnPendingGuardian();
             saveActiveRun();
         }
 
@@ -3590,12 +3796,8 @@
                 state.level++;
                 state.xpToNext = Math.floor(state.xpToNext * 1.4);
                 state.pendingUpgradeCount++;
-
-                // Change biome every 3 levels
-                if (state.level % 3 === 0) {
-                    loadBiome(Math.floor(state.level / 3));
-                }
             }
+            queueGuardianIfNeeded();
             updateHUD();
 
             if (state.pendingUpgradeCount > 0 && state.gamePhase === 'playing') {
@@ -3733,6 +3935,7 @@
             enemies.forEach(e => {
                 if (!e.isDead) {
                     let dist = player.mesh.position.distanceTo(e.mesh.position);
+                    if (e.typeData?.isBoss) dist *= 0.55;
 
                     // Bias factor: Make the current target "closer" effectively to prevent jittery switching
                     if (state.targetEnemy === e) {
@@ -3770,6 +3973,7 @@
             // Enemy AI
             enemies.forEach(e => {
                 if (e.isDead) return;
+                e.update(dt);
 
                 // Terrain following for enemies
                 e.move(dt, new THREE.Vector2(0, 0)); // This updates terrain height
@@ -3777,7 +3981,9 @@
                 const toPlayer = new THREE.Vector3().subVectors(player.mesh.position, e.mesh.position);
                 const dist = toPlayer.length();
 
-                if (e.type === 'healer') {
+                if (e.typeData?.isBoss) {
+                    updateBossAI(e, dt, toPlayer, dist);
+                } else if (e.type === 'healer') {
                     const woundedAlly = enemies.find(ally => !ally.isDead && ally !== e && ally.hp < ally.maxHp);
                     if (woundedAlly && clock.getElapsedTime() - e.lastHealTime > 2) {
                         woundedAlly.heal(ENEMY_TYPES.healer.healAmount);
@@ -3866,8 +4072,10 @@
                                     b.previousPosition,
                                     b.group.position,
                                     enemy.mesh.position,
-                                    2.6,
-                                    6.0
+                                    enemy.typeData?.isBoss
+                                        ? 2.6 * (enemy.typeData.size || 1)
+                                        : 2.6,
+                                    enemy.typeData?.isBoss ? 8.0 : 6.0
                                 );
 
                                 if (enemyHitTime !== null) {
@@ -3884,16 +4092,22 @@
                                     createExplosion(b.group.position, 18, enemyColor, 'armor', enemy.type);
 
                                     if (enemy.isDead) {
-                                        const points = ENEMY_TYPES[enemy.type]?.points || 100;
+                                        const enemyData = ENEMY_TYPES[enemy.type] || {};
+                                        const points = enemyData.points || 100;
                                         const rewards = awardEnemyKill(points);
-                                        addXP(points / 2);
+                                        addXP(enemyData.xpReward ?? points / 2);
+                                        const guardianBonus = enemyData.isBoss
+                                            ? handleGuardianDefeat(enemy)
+                                            : 0;
                                         showScorePopup(
                                             enemy.mesh.position.x,
                                             enemy.mesh.position.z,
                                             rewards.scoreReward,
-                                            rewards.coinReward
+                                            rewards.coinReward + guardianBonus
                                         );
                                         enemies.splice(j, 1);
+                                    } else if (enemy.typeData?.isBoss) {
+                                        updateBossHUD();
                                     }
                                     hit = true;
                                     break;
@@ -4036,7 +4250,8 @@
             // Spawner
             const spawnRate = getSpawnRateForLevel(state.level);
             const maxEnemies = Math.min(12, 3 + state.level);
-            if (clock.getElapsedTime() - state.lastSpawnTime > spawnRate) {
+            if (!activeBoss && !state.guardianPending &&
+                clock.getElapsedTime() - state.lastSpawnTime > spawnRate) {
                 if (enemies.filter(e => !e.isDead).length < maxEnemies) {
                     spawnEnemy();
                     state.lastSpawnTime = clock.getElapsedTime();
@@ -4146,6 +4361,7 @@
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('pause-screen', false);
             setScreenVisibility('game-over-screen', true);
+            hideBossUI();
             setPauseUIVisible(false);
             updateComboIndicator();
             syncHUDControls();
