@@ -192,7 +192,7 @@ Cover:
 - No music.
 - Add speed-reactive engine hum and realm ambience.
 - Master Sound toggle plus separate Effects and Engine/Ambience sliders.
-- Contextual once-only tips plus full tutorial replay/reset.
+- All tutorial screens, replay controls, and contextual tutorial tips are removed by explicit user request; gameplay relies on clear HUD labels, telegraphs, and mode descriptions.
 
 ## Save/platform/PWA
 

@@ -145,7 +145,7 @@ The old fixed systems were removed from the production path:
 - origin-bound water/lava/crystal/dune/spike placement;
 - global wall collision in the projectile loop.
 
-The pure arena-boundary math helper remains only for historical regression tests and is not called by live gameplay.
+The obsolete arena-boundary collision helper was later removed completely during the Phase 17 debugging hotfix.
 
 ## Performance result
 

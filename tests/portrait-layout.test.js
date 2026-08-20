@@ -60,8 +60,9 @@ test('garage and combo UI are present in the portrait-safe layout', () => {
   assert.match(html, /id="combo-indicator"/);
   assert.match(html, /id="coins"/);
   assert.match(html, /id="toggle-quality-panel"/);
-  assert.match(html, /id="tutorial-screen"/);
   assert.match(html, /id="new-run-confirm-screen"/);
+  assert.doesNotMatch(html, /id="tutorial-screen"/);
+  assert.doesNotMatch(html, /replay-tutorial-panel/);
   assert.match(html, /id="result-coins"/);
   assert.match(html, /id="effects-volume"/);
   assert.match(html, /id="boss-hud"/);

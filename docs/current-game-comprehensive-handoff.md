@@ -1,7 +1,7 @@
 # Tank Realms — Comprehensive Current-State Review and AI Handoff
 
 **Documentation date:** 20 August 2026<br>
-**Current gameplay milestone:** Phase 17 infinite-world foundation implemented after Phase 16 stabilization<br>
+**Current gameplay milestone:** Phase 17 infinite-world foundation plus performance/ground/tutorial hotfix<br>
 **Repository:** `misualpa54-gif/My-Tank-game`<br>
 **Working/review branch:** `arena/01a01b73-my-tank-game`<br>
 **Phase 15 gameplay baseline:** `eeed271f4bb25ad0bd5434b66d07517145426dc9`<br>
@@ -359,20 +359,10 @@ When a new run is approved:
 7. The HUD, quick controls, and pause button become available.
 8. A living save is written for save-enabled modes.
 9. Boss Hunt immediately queues/spawns the first Guardian.
-10. If the tutorial has never been completed, combat enters the tutorial phase and stops updating until the tutorial is completed/skipped.
-
-### First-run tutorial
-
-The tutorial is a four-step glass modal:
-
-1. Move — explains the correct movement side.
-2. Fire — explains the correct firing side and auto-aim.
-3. Choose Upgrades — explains XP and three temporary choices.
-4. Earn and Improve — explains combos, permanent coins, and Garage spending.
-
-Tutorial wording automatically changes for Left-handed mode. The final Next button becomes Start Battle. Completion is stored permanently. Replay Tutorial is available from Settings.
 
 ### Pause and Settings
+
+All tutorial and contextual-tip systems have been removed completely by user request. New runs enter gameplay directly.
 
 Pressing Pause:
 
@@ -395,7 +385,6 @@ If the browser loses visibility or the Android app backgrounds:
 
 - active play pauses;
 - input is cleared;
-- paused/tutorial/upgrade states are saved;
 - page hide writes profile and active-run data.
 
 ### Defeat/completion transition
@@ -605,7 +594,6 @@ Input is cleared on:
 - touch cancel;
 - window blur;
 - pause;
-- tutorial/upgrade transition;
 - app backgrounding;
 - quit;
 - game over.
@@ -632,7 +620,7 @@ Permanent Garage upgrades are applied to these values at run start unless the mo
 ### World and camera
 
 - The world uses deterministic analytic terrain and 48-unit streamed chunks.
-- Low/Medium maintain 25 pooled ground tiles; High adds a 49-tile decorative view ring.
+- Low/Medium use one continuous 240-unit rebaked ground surface; High expands it to 336 units and adds a decorative chunk ring. Continuous ground removes square tile seams.
 - There are no arena walls or gameplay boundary; only a ±1,000,000 safety clamp protects impossible/corrupt coordinates.
 - Enemies and Guardians spawn around the current player rather than world origin.
 - Major streamed cover blocks/slides player movement and steers enemies.
@@ -1447,7 +1435,6 @@ Order:
 7. Flashes Full/Reduced
 8. Controls Standard/Left-handed
 9. HUD Normal/Large
-10. Replay Tutorial
 11. Close
 
 Persisted defaults:
@@ -1564,7 +1551,6 @@ Save version:
 - visited biomes;
 - tanks with result-ending runs;
 - latest 30 Daily records;
-- tutorial completion;
 - all settings.
 
 ### Living active run stores
@@ -1638,11 +1624,10 @@ Important phases:
 - `menu`
 - `playing`
 - `paused`
-- `tutorial`
 - `choosing-upgrade`
 - `gameover`
 
-Additional booleans track menu overlays such as Garage, Achievements, Daily, Game Modes, Practice setup, Settings, tutorial, and overwrite confirmation.
+Additional booleans track menu overlays such as Garage, Achievements, Daily, Game Modes, Practice setup, Settings, and overwrite confirmation.
 
 ### Android Back priority
 

@@ -63,7 +63,6 @@ function createHarness(storageSeed = {}) {
   if (!Object.hasOwn(storageSeed, 'tank_realms_profile_v1')) {
     window.localStorage.setItem('tank_realms_profile_v1', JSON.stringify({
       version: 1,
-      tutorialCompleted: true,
       settings: {}
     }));
   }
@@ -233,8 +232,6 @@ function createHarness(storageSeed = {}) {
       calculateDamageAfterArmor,
       requestNewRun,
       closeNewRunConfirmation,
-      advanceTutorial,
-      finishTutorial,
       renderRunResults,
       playGameSound,
       tankDesigns: () => TANK_DESIGNS,
@@ -246,16 +243,18 @@ function createHarness(storageSeed = {}) {
       endGame,
       quitToMenu,
       loadBiome,
+      getTerrainHeight,
+      getTerrainNormal,
       shoot,
       acquireBulletVisual,
       releaseBulletVisual,
       releaseBulletAt,
       updatePhysics,
+      animate,
       getFrameEquivalentAlpha,
       getFrameEquivalentMultiplier,
       getFrameEquivalentChance,
       getSegmentCylinderHitTime,
-      getArenaBoundaryHitTime,
       getSpawnRateForLevel,
       getTouchControlTop,
       makeEnemy: (type, x, z) => {
@@ -313,8 +312,9 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     );
     assert.ok(api.environmentColliders().length > 0);
     assert.ok(api.environmentColliders().length < 300);
-    assert.equal(api.worldChunks().size, 25);
-    assert.equal(api.worldGroundTiles().length, 25);
+    assert.ok(api.worldChunks().size >= 9 && api.worldChunks().size <= 25);
+    assert.ok(api.worldChunkQueue().length > 0);
+    assert.equal(api.worldGroundTiles().length, 1);
   });
 
   await t.test('applies persistent Low, Medium, and High quality budgets', () => {
@@ -473,6 +473,21 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     );
   });
 
+  await t.test('stops repeated WebGL renders behind upgrade choices and menus', () => {
+    api.startGame();
+    api.addXP(100);
+    assert.equal(api.state().gamePhase, 'choosing-upgrade');
+    api.animate();
+    const renderedAfterDirtyFrame = api.renderer().renderCount;
+    api.animate();
+    assert.equal(api.renderer().renderCount, renderedAfterDirtyFrame);
+    api.quitToMenu();
+    for (let index = 0; index < 30; index++) api.animate();
+    const renderedMenuFrame = api.renderer().renderCount;
+    api.animate();
+    assert.equal(api.renderer().renderCount, renderedMenuFrame);
+  });
+
   await t.test('unlocks build evolutions and trade-off upgrades safely', () => {
     const tiers = {
       ...api.state().upgradeTiers,
@@ -503,7 +518,7 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.ok(stats.speed > 100);
   });
 
-  await t.test('phase dash has a cooldown and stays inside the arena', () => {
+  await t.test('phase dash has a cooldown and respects infinite-world movement', () => {
     api.startGame();
     api.state().playerStats.phaseDash = 1;
     api.state().abilityState.dashReadyIn = 0;
@@ -667,12 +682,6 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.ok(start.distanceTo(target) > 2.6);
     assert.ok(end.distanceTo(target) > 2.6);
     assert.notEqual(api.getSegmentCylinderHitTime(start, end, target, 2.6, 6), null);
-    assert.ok(Math.abs(
-      api.getArenaBoundaryHitTime(
-        new window.THREE.Vector3(45, 2, 0),
-        new window.THREE.Vector3(51, 2, 0)
-      ) - (1 / 6)
-    ) < 1e-12);
   });
 
   await t.test('prevents a stalled frame from tunnelling through an enemy', () => {
@@ -845,7 +854,8 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
       const stats = getSceneStats(api.scene());
       assert.ok(stats.meshes < 350, `biome ${i % 6} created ${stats.meshes} meshes`);
       assert.ok(api.environmentColliders().length < 400);
-      assert.equal(api.worldChunks().size, 25);
+      assert.ok(api.worldChunks().size >= 9 && api.worldChunks().size <= 25);
+      assert.ok(api.worldChunkQueue().length > 0);
     }
   });
 
@@ -877,6 +887,20 @@ test('infinite world chunks are deterministic and stream around distant coordina
     .map(collider => `${collider.id}:${collider.position.x.toFixed(2)}:${collider.position.z.toFixed(2)}`)
     .sort();
   assert.deepEqual(secondCover, firstCover);
+  const ground = api.worldGroundTiles()[0];
+  assert.ok(ground);
+  assert.equal(ground.worldSize, 240);
+  const positions = ground.mesh.geometry.attributes.position;
+  const normals = ground.mesh.geometry.attributes.normal;
+  const centerIndex = Math.floor(positions.count / 2);
+  const worldX = ground.mesh.position.x + positions.getX(centerIndex);
+  const worldZ = ground.mesh.position.z - positions.getY(centerIndex);
+  assert.ok(Math.abs(
+    positions.getZ(centerIndex) - api.getTerrainHeight(worldX, worldZ)
+  ) < 1e-5);
+  assert.ok(Number.isFinite(normals.getX(centerIndex)));
+  assert.ok(Number.isFinite(normals.getY(centerIndex)));
+  assert.ok(Number.isFinite(normals.getZ(centerIndex)));
   const cover = api.environmentColliders()[0];
   const current = cover.position.clone().add(new window.THREE.Vector3(
     cover.radius + api.worldConfig().playerColliderRadius + 1,
@@ -893,7 +917,7 @@ test('infinite world chunks are deterministic and stream around distant coordina
   assert.ok(Math.abs(api.player().mesh.position.x) > 44);
   assert.ok(api.worldChunks().has('3,-3'));
   assert.ok(api.worldChunks().size <= 49);
-  assert.equal(api.worldGroundTiles().length, 25);
+  assert.equal(api.worldGroundTiles().length, 1);
   assert.ok(api.getNearbyEnvironmentColliders(api.player().mesh.position).length < 180);
   harness.dom.window.close();
 });
@@ -901,10 +925,12 @@ test('infinite world chunks are deterministic and stream around distant coordina
 test('quality scaling adds a decorative streamed ring only on High', () => {
   const harness = createHarness();
   harness.api.startGame();
-  assert.equal(harness.api.worldGroundTiles().length, 25);
+  assert.equal(harness.api.worldGroundTiles().length, 1);
+  assert.equal(harness.api.worldGroundTiles()[0].worldSize, 240);
   harness.api.toggleQualityMode();
   assert.equal(harness.api.state().qualityMode, 'high');
-  assert.equal(harness.api.worldGroundTiles().length, 49);
+  assert.equal(harness.api.worldGroundTiles().length, 1);
+  assert.equal(harness.api.worldGroundTiles()[0].worldSize, 336);
   for (let index = 0; index < 30; index++) harness.api.updateInfiniteWorld();
   assert.ok(harness.api.worldChunks().size >= 25);
   assert.ok(
@@ -1342,28 +1368,6 @@ test('Custom Practice honors setup and cannot change permanent progress or a sav
   harness.dom.window.close();
 });
 
-test('first-run tutorial pauses battle and completes in four steps', () => {
-  const harness = createHarness({
-    tank_realms_profile_v1: JSON.stringify({
-      version: 1,
-      tutorialCompleted: false,
-      settings: {}
-    })
-  });
-  harness.api.startGame();
-  assert.equal(harness.api.state().gamePhase, 'tutorial');
-  assert.equal(harness.api.state().tutorialOpen, true);
-  assert.equal(
-    harness.window.document.getElementById('tutorial-screen').classList.contains('hidden'),
-    false
-  );
-  for (let i = 0; i < 4; i++) harness.api.advanceTutorial();
-  assert.equal(harness.api.state().gamePhase, 'playing');
-  assert.equal(harness.api.profile().tutorialCompleted, true);
-  assert.equal(harness.api.state().tutorialOpen, false);
-  harness.dom.window.close();
-});
-
 test('new-run confirmation protects a living save', () => {
   const harness = createHarness();
   harness.api.startGame();
@@ -1426,7 +1430,6 @@ test('run-start record baselines and enemy cooldowns survive Continue', () => {
       version: 1,
       bestScore: 100,
       bestLevel: 2,
-      tutorialCompleted: true,
       settings: {}
     })
   });
@@ -1597,7 +1600,6 @@ test('left-handed mode swaps movement and firing zones', () => {
   const harness = createHarness({
     tank_realms_profile_v1: JSON.stringify({
       version: 1,
-      tutorialCompleted: true,
       settings: { leftHanded: true }
     })
   });

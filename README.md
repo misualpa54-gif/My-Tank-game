@@ -17,11 +17,23 @@ Phases 1–14 provide the stable offline APK plus optimization, saving, economy,
 - Adventure and Daily behavior remains unchanged;
 - no internet, account, ads, real-money purchases, or network permission is added.
 
-Phase 17 begins the approved definitive combined roadmap with an infinite-world foundation:
+Phase 17 debugging hotfix follows real-player feedback:
+
+- all tutorial screens, state, replay controls, and first-run interruptions removed;
+- 25/49 ground tiles replaced by one continuous 240/336-unit surface with no square seams;
+- nearest 3×3 scenery core builds first, while the rest streams after first paint;
+- shared realm geometry/material caches replace per-chunk duplicates;
+- home/Continue/retry buttons show immediate mode-specific loading feedback;
+- static menu/pause/upgrade screens stop continuously rendering the 3D world;
+- level-up overlay no longer uses expensive double backdrop blur;
+- synthetic 50-restart and 30-biome stress time reduced by roughly 60–70%;
+- 72 automated tests pass with zero failures.
+
+Phase 17 introduced the approved infinite-world foundation:
 
 - no arena walls or ±44 movement box;
 - deterministic analytic terrain at any world coordinate;
-- quality-scaled pooled ground tiles and 48-unit streamed scenery chunks;
+- quality-scaled continuous ground surface and 48-unit streamed scenery chunks;
 - 5×5 gameplay neighborhood, with a farther decorative High-quality ring;
 - deterministic groves, rocks, grass, crystals, spikes, water and lava;
 - player collision/sliding against major cover and enemy cover avoidance;
@@ -59,6 +71,7 @@ Detailed reports are in:
 - `docs/phase15-additional-game-modes-report.md`
 - `docs/phase16-stability-loading-report.md`
 - `docs/phase17-infinite-world-foundation-report.md`
+- `docs/phase17-debugging-performance-hotfix-report.md`
 - `docs/v25-alternative-comparison-audit.md`
 - `docs/definitive-combined-roadmap.md`
 - `docs/godot-native-port-spec.md`

@@ -146,21 +146,9 @@
         </div>
     </div>
 
-    <div id="tutorial-screen" class="screen hidden" role="dialog" aria-modal="true">
-        <div class="tutorial-panel">
-            <div class="tutorial-step-count">Tutorial <span id="tutorial-step-number">1</span>/4</div>
-            <h1 id="tutorial-title">Move</h1>
-            <p id="tutorial-text">Drag the lower-left area to move your tank.</p>
-            <div class="tutorial-actions">
-                <button type="button" class="btn" id="tutorial-next">Next</button>
-                <button type="button" class="garage-action" id="tutorial-skip">Skip Tutorial</button>
-            </div>
-        </div>
-    </div>
-
     <div id="game-over-screen" class="screen hidden">
         <div class="results-panel">
-            <div class="tutorial-step-count" id="result-mode">Adventure</div>
+            <div class="screen-eyebrow" id="result-mode">Adventure</div>
             <h1 id="result-title">💀 Defeated</h1>
             <h2>Score: <span id="final-score">0</span> • Level: <span id="final-level">1</span></h2>
             <div class="results-grid">
@@ -181,7 +169,7 @@
 
     <div id="game-modes-screen" class="screen hidden">
         <div class="modes-panel">
-            <div class="tutorial-step-count">Additional Game Modes</div>
+            <div class="screen-eyebrow">Additional Game Modes</div>
             <h1>Choose a Mode</h1>
             <p class="modes-intro">Each mode keeps the same portrait controls, tanks, upgrades, and offline play.</p>
             <div class="mode-card-list">
@@ -217,7 +205,7 @@
 
     <div id="practice-screen" class="screen hidden">
         <div class="practice-panel">
-            <div class="tutorial-step-count">Reward-Free Training</div>
+            <div class="screen-eyebrow">Reward-Free Training</div>
             <h1>Custom Practice</h1>
             <p>Practice never changes coins, records, mastery, achievements, or your saved run.</p>
             <div class="practice-fields">
@@ -238,7 +226,7 @@
 
     <div id="daily-screen" class="screen hidden">
         <div class="daily-panel">
-            <div class="tutorial-step-count">Offline Daily Challenge</div>
+            <div class="screen-eyebrow">Offline Daily Challenge</div>
             <h1 id="daily-title">Today’s Challenge</h1>
             <p id="daily-date">Date</p>
             <div class="daily-modifier">
@@ -299,7 +287,6 @@
                 <button type="button" class="hud-icon-btn wide" id="toggle-flashes-panel">Flashes: Full</button>
                 <button type="button" class="hud-icon-btn wide" id="toggle-handed-panel">Controls: Standard</button>
                 <button type="button" class="hud-icon-btn wide" id="toggle-hud-scale-panel">HUD: Normal</button>
-                <button type="button" class="hud-icon-btn wide" id="replay-tutorial-panel">Replay Tutorial</button>
                 <button type="button" class="hud-icon-btn wide" id="close-settings-panel">Close</button>
             </div>
             <div class="settings-row">

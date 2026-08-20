@@ -331,7 +331,9 @@
             chunkSize: 48,
             activeRadius: 2,
             retainedRadius: 3,
-            groundSegments: 24,
+            groundSegmentsLow: 32,
+            groundSegmentsMedium: 48,
+            groundSegmentsHigh: 64,
             maxCoordinate: 1000000,
             enemyRepositionDistance: 100,
             enemySpawnMinDistance: 42,
@@ -543,28 +545,6 @@
             return hitTime;
         }
 
-        // Retained as a pure regression helper for old-save/tests; live infinite
-        // gameplay intentionally has no arena-wall collision.
-        // eslint-disable-next-line no-unused-vars
-        function getArenaBoundaryHitTime(start, end, boundary = 46) {
-            if (Math.abs(end.x) <= boundary && Math.abs(end.z) <= boundary) return null;
-
-            let earliestHit = 1;
-            const deltaX = end.x - start.x;
-            const deltaZ = end.z - start.z;
-            if (Math.abs(end.x) > boundary && deltaX !== 0) {
-                const xBoundary = end.x > boundary ? boundary : -boundary;
-                const xHit = (xBoundary - start.x) / deltaX;
-                if (xHit >= 0 && xHit <= 1) earliestHit = Math.min(earliestHit, xHit);
-            }
-            if (Math.abs(end.z) > boundary && deltaZ !== 0) {
-                const zBoundary = end.z > boundary ? boundary : -boundary;
-                const zHit = (zBoundary - start.z) / deltaZ;
-                if (zHit >= 0 && zHit <= 1) earliestHit = Math.min(earliestHit, zHit);
-            }
-            return earliestHit;
-        }
-
         // Game State
         const DEFAULT_PLAYER_STATS = Object.freeze({
             speed: 100,
@@ -651,7 +631,6 @@
                 achievements: {},
                 dailyRecords: {},
                 lifetimeStats: createDefaultLifetimeStats(),
-                tutorialCompleted: false,
                 settings: {
                     soundEnabled: false,
                     cameraMode: 'follow',
@@ -732,9 +711,6 @@
             dailyOpen: false,
             gameModesOpen: false,
             practiceOpen: false,
-            tutorialOpen: false,
-            tutorialStep: 0,
-            tutorialReturnTarget: 'playing',
             newRunConfirmOpen: false,
             pendingNewRunMode: 'adventure',
             pendingPracticeConfig: sanitizePracticeConfig(),
@@ -778,6 +754,8 @@
         let damageOverlayTimer = null;
         let healOverlayTimer = null;
         let lastModeHudSignature = '';
+        let needsRender = true;
+        let pendingRunStartTimer = null;
         const lastSoundTimes = new Map();
 
         // Three.js Globals
@@ -797,6 +775,7 @@
         let worldAnchorChunk = { x: Number.NaN, z: Number.NaN };
         let waterMeshes = [];
         let worldLavaMeshes = [];
+        let worldSharedResources = new Map();
         let resetInputController = () => {};
 
         const bulletPool = [];
@@ -808,12 +787,15 @@
             if (!object || typeof object.traverse !== 'function') return;
 
             object.traverse(child => {
-                if (child.geometry) geometries.add(child.geometry);
+                if (child.geometry && !child.geometry.userData?.worldShared) {
+                    geometries.add(child.geometry);
+                }
                 const childMaterials = Array.isArray(child.material)
                     ? child.material
                     : [child.material];
 
                 childMaterials.filter(Boolean).forEach(material => {
+                    if (material.userData?.worldShared) return;
                     materials.add(material);
                     Object.values(material).forEach(value => {
                         if (value && value.isTexture) textures.add(value);
@@ -851,6 +833,23 @@
             if (object) removeAndDisposeObjects([object]);
         }
 
+        function getWorldSharedResource(key, factory) {
+            if (!worldSharedResources.has(key)) {
+                const resource = factory();
+                resource.userData = resource.userData || {};
+                resource.userData.worldShared = true;
+                worldSharedResources.set(key, resource);
+            }
+            return worldSharedResources.get(key);
+        }
+
+        function disposeWorldSharedResources() {
+            worldSharedResources.forEach(resource => {
+                if (typeof resource.dispose === 'function') resource.dispose();
+            });
+            worldSharedResources = new Map();
+        }
+
         function clearEnvironment() {
             removeAndDisposeObjects(environmentObjects);
             removeAndDisposeObjects(environmentParticleBatches);
@@ -858,6 +857,7 @@
             removeAndDisposeObject(waterMesh);
             removeAndDisposeObjects(lavaMeshes);
             removeAndDisposeObjects([ambientLight, dirLight, hemisphereLight]);
+            disposeWorldSharedResources();
 
             if (scene.background && scene.background.isTexture) scene.background.dispose();
             scene.background = null;
@@ -947,6 +947,7 @@
                 );
             }
             applySceneQualityVisibility();
+            needsRender = true;
             if (scene) {
                 scene.traverse(object => {
                     if (!object.isMesh) return;
@@ -1281,7 +1282,6 @@
             safeProfile.dailyRecords = sanitizeDailyRecords(savedProfile.dailyRecords);
             safeProfile.settings.soundEnabled = savedProfile.settings?.soundEnabled === true;
             safeProfile.settings.cameraMode = savedProfile.settings?.cameraMode === 'wide' ? 'wide' : 'follow';
-            safeProfile.tutorialCompleted = savedProfile.tutorialCompleted === true;
             safeProfile.settings.controlAssist = savedProfile.settings?.controlAssist === true;
             safeProfile.settings.qualityMode = QUALITY_PRESETS[savedProfile.settings?.qualityMode]
                 ? savedProfile.settings.qualityMode
@@ -2025,15 +2025,15 @@
             return height * (1 - flatten * 0.8);
         }
 
-        function getTerrainNormal(x, z) {
+        function getTerrainNormal(x, z, target = null) {
             const delta = 0.5;
             const hL = getTerrainHeight(x - delta, z);
             const hR = getTerrainHeight(x + delta, z);
             const hD = getTerrainHeight(x, z - delta);
             const hU = getTerrainHeight(x, z + delta);
 
-            const normal = new THREE.Vector3(hL - hR, 2 * delta, hD - hU);
-            normal.normalize();
+            const normal = target || new THREE.Vector3();
+            normal.set(hL - hR, 2 * delta, hD - hU).normalize();
             return normal;
         }
 
@@ -2495,9 +2495,9 @@
         }
 
         function getWorldGroundSegments() {
-            if (state.qualityMode === 'low') return 16;
-            if (state.qualityMode === 'high') return WORLD_CONFIG.groundSegments;
-            return 20;
+            if (state.qualityMode === 'low') return WORLD_CONFIG.groundSegmentsLow;
+            if (state.qualityMode === 'high') return WORLD_CONFIG.groundSegmentsHigh;
+            return WORLD_CONFIG.groundSegmentsMedium;
         }
 
         function getWorldVisualRadius() {
@@ -2507,17 +2507,25 @@
         }
 
         function bakeWorldGroundTile(tile, chunkX, chunkZ, biome) {
-            const size = WORLD_CONFIG.chunkSize;
-            const centerX = chunkX * size + size / 2;
-            const centerZ = chunkZ * size + size / 2;
+            const chunkSize = WORLD_CONFIG.chunkSize;
+            const centerX = chunkX * chunkSize + chunkSize / 2;
+            const centerZ = chunkZ * chunkSize + chunkSize / 2;
             const positions = tile.mesh.geometry.attributes.position;
-            const colors = [];
+            let colorAttribute = tile.mesh.geometry.attributes.color;
+            if (!colorAttribute) {
+                colorAttribute = new THREE.Float32BufferAttribute(
+                    new Float32Array(positions.count * 3),
+                    3
+                );
+                tile.mesh.geometry.setAttribute('color', colorAttribute);
+            }
             const baseColor = new THREE.Color(biome.groundColor);
             const grassColor = new THREE.Color(biome.grassColor);
             const dryColor = new THREE.Color(
                 biome.name.includes('Frozen') ? 0x9fb4c4 :
                     biome.name.includes('Volcanic') ? 0x3b2720 : 0x7a5c33
             );
+            const vertexColor = new THREE.Color();
             for (let index = 0; index < positions.count; index++) {
                 const localX = positions.getX(index);
                 const localPlaneY = positions.getY(index);
@@ -2528,16 +2536,15 @@
                 const elevationBlend = Math.min(1, Math.max(0, (height + 1) / 4));
                 const patch = Math.sin(worldX * 0.045 + 1.3) *
                     Math.cos(worldZ * 0.05 - 0.7);
-                const color = baseColor.clone().lerp(grassColor, elevationBlend * 0.35);
-                color.lerp(dryColor, Math.max(0, patch - 0.55) * 0.22);
-                colors.push(color.r, color.g, color.b);
+                vertexColor.copy(baseColor).lerp(grassColor, elevationBlend * 0.35);
+                vertexColor.lerp(dryColor, Math.max(0, patch - 0.55) * 0.22);
+                colorAttribute.setXYZ(index, vertexColor.r, vertexColor.g, vertexColor.b);
             }
-            tile.mesh.geometry.setAttribute(
-                'color',
-                new THREE.Float32BufferAttribute(colors, 3)
-            );
             positions.needsUpdate = true;
+            // One continuous surface has no inter-tile normal seam. A single native
+            // normal pass is substantially cheaper than analytic edge stitching.
             tile.mesh.geometry.computeVertexNormals();
+            colorAttribute.needsUpdate = true;
             tile.mesh.position.set(centerX, 0, centerZ);
             tile.chunkX = chunkX;
             tile.chunkZ = chunkZ;
@@ -2547,29 +2554,34 @@
             removeAndDisposeObject(groundMesh);
             groundMesh = new THREE.Group();
             groundMesh.userData.worldGround = true;
-            worldGroundTiles = [];
-            const segments = getWorldGroundSegments();
             const visualRadius = getWorldVisualRadius();
-            const tileCount = (visualRadius * 2 + 1) ** 2;
-            for (let index = 0; index < tileCount; index++) {
-                const geometry = new THREE.PlaneGeometry(
-                    WORLD_CONFIG.chunkSize,
-                    WORLD_CONFIG.chunkSize,
-                    segments,
-                    segments
-                );
-                const material = new THREE.MeshStandardMaterial({
+            const worldSize = WORLD_CONFIG.chunkSize * (visualRadius * 2 + 1);
+            const segments = getWorldGroundSegments();
+            const geometry = new THREE.PlaneGeometry(
+                worldSize,
+                worldSize,
+                segments,
+                segments
+            );
+            const material = getWorldSharedResource(
+                'ground-material',
+                () => new THREE.MeshStandardMaterial({
                     vertexColors: true,
                     roughness: 0.9,
                     metalness: 0.1
-                });
-                const mesh = new THREE.Mesh(geometry, material);
-                mesh.rotation.x = -Math.PI / 2;
-                mesh.receiveShadow = true;
-                mesh.frustumCulled = false;
-                groundMesh.add(mesh);
-                worldGroundTiles.push({ mesh, chunkX: Number.NaN, chunkZ: Number.NaN });
-            }
+                })
+            );
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.rotation.x = -Math.PI / 2;
+            mesh.receiveShadow = true;
+            mesh.frustumCulled = false;
+            groundMesh.add(mesh);
+            worldGroundTiles = [{
+                mesh,
+                worldSize,
+                chunkX: Number.NaN,
+                chunkZ: Number.NaN
+            }];
             scene.add(groundMesh);
             worldAnchorChunk = { x: Number.NaN, z: Number.NaN };
             repositionInfiniteGround(biome, centerX, centerZ, true);
@@ -2581,40 +2593,16 @@
             if (!force && anchorX === worldAnchorChunk.x && anchorZ === worldAnchorChunk.z) {
                 return false;
             }
-            const desired = [];
-            const desiredKeys = new Set();
-            const visualRadius = getWorldVisualRadius();
-            for (let dx = -visualRadius; dx <= visualRadius; dx++) {
-                for (let dz = -visualRadius; dz <= visualRadius; dz++) {
-                    const chunkX = anchorX + dx;
-                    const chunkZ = anchorZ + dz;
-                    desired.push({ chunkX, chunkZ, distance: dx * dx + dz * dz });
-                    desiredKeys.add(getWorldChunkKey(chunkX, chunkZ));
-                }
-            }
-            desired.sort((a, b) => a.distance - b.distance);
-            const tileByKey = new Map(
-                worldGroundTiles
-                    .filter(tile => Number.isFinite(tile.chunkX))
-                    .map(tile => [getWorldChunkKey(tile.chunkX, tile.chunkZ), tile])
-            );
-            const reusable = worldGroundTiles.filter(tile =>
-                !desiredKeys.has(getWorldChunkKey(tile.chunkX, tile.chunkZ))
-            );
-            desired.forEach(location => {
-                const key = getWorldChunkKey(location.chunkX, location.chunkZ);
-                if (tileByKey.has(key)) return;
-                const tile = reusable.shift();
-                if (tile) bakeWorldGroundTile(tile, location.chunkX, location.chunkZ, biome);
-            });
+            const tile = worldGroundTiles[0];
+            if (tile) bakeWorldGroundTile(tile, anchorX, anchorZ, biome);
             worldAnchorChunk = { x: anchorX, z: anchorZ };
             return true;
         }
 
         function createWorldInstancedMesh(geometry, material, matrices, category = '') {
             if (matrices.length === 0) {
-                geometry.dispose();
-                material.dispose();
+                if (!geometry.userData?.worldShared) geometry.dispose();
+                if (!material.userData?.worldShared) material.dispose();
                 return null;
             }
             const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
@@ -2786,52 +2774,77 @@
                 pushMatrix(grassMatrices, worldX, height + 0.35, worldZ, scale, scale, scale, random() * Math.PI * 2);
             }
 
+            const realmKey = `realm-${state.currentBiome}`;
             const trunk = createWorldInstancedMesh(
-                new THREE.CylinderGeometry(0.3, 0.48, 1, 7),
-                new THREE.MeshStandardMaterial({ color: biome.name.includes('Frozen') ? 0x3a2a1a : 0x4a3728, roughness: 0.9 }),
+                getWorldSharedResource('world-trunk-geometry', () =>
+                    new THREE.CylinderGeometry(0.3, 0.48, 1, 7)),
+                getWorldSharedResource(`${realmKey}-trunk-material`, () =>
+                    new THREE.MeshStandardMaterial({
+                        color: biome.name.includes('Frozen') ? 0x3a2a1a : 0x4a3728,
+                        roughness: 0.9
+                    })),
                 trunkMatrices,
                 'cover'
             );
             const foliageColor = biome.name.includes('Frozen') ? 0xdde9ef :
                 biome.name.includes('Swamp') ? 0x4a6a3a : 0x2d5a27;
             const foliage = createWorldInstancedMesh(
-                new THREE.ConeGeometry(1, 1, 7),
-                new THREE.MeshStandardMaterial({ color: foliageColor, roughness: 0.8 }),
+                getWorldSharedResource('world-foliage-geometry', () =>
+                    new THREE.ConeGeometry(1, 1, 7)),
+                getWorldSharedResource(`${realmKey}-foliage-material`, () =>
+                    new THREE.MeshStandardMaterial({ color: foliageColor, roughness: 0.8 })),
                 foliageMatrices,
                 'cover'
             );
             const cactus = createWorldInstancedMesh(
-                new THREE.CylinderGeometry(0.4, 0.5, 1, 7),
-                new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.75 }),
+                getWorldSharedResource('world-cactus-geometry', () =>
+                    new THREE.CylinderGeometry(0.4, 0.5, 1, 7)),
+                getWorldSharedResource('world-cactus-material', () =>
+                    new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.75 })),
                 cactusMatrices,
                 'cover'
             );
             const rocks = createWorldInstancedMesh(
-                new THREE.DodecahedronGeometry(1),
-                new THREE.MeshStandardMaterial({ color: biome.name.includes('Frozen') ? 0x8a9aaa : 0x555555, roughness: 0.88 }),
+                getWorldSharedResource('world-rock-geometry', () =>
+                    new THREE.DodecahedronGeometry(1)),
+                getWorldSharedResource(`${realmKey}-rock-material`, () =>
+                    new THREE.MeshStandardMaterial({
+                        color: biome.name.includes('Frozen') ? 0x8a9aaa : 0x555555,
+                        roughness: 0.88
+                    })),
                 rockMatrices,
                 'cover'
             );
             const grass = createWorldInstancedMesh(
-                new THREE.ConeGeometry(0.1, 0.8, 4),
-                new THREE.MeshStandardMaterial({ color: biome.grassColor, roughness: 0.9, side: THREE.DoubleSide }),
+                getWorldSharedResource('world-grass-geometry', () =>
+                    new THREE.ConeGeometry(0.1, 0.8, 4)),
+                getWorldSharedResource(`${realmKey}-grass-material`, () =>
+                    new THREE.MeshStandardMaterial({
+                        color: biome.grassColor,
+                        roughness: 0.9,
+                        side: THREE.DoubleSide
+                    })),
                 grassMatrices,
                 'grass'
             );
             const crystals = createWorldInstancedMesh(
-                new THREE.ConeGeometry(0.35, 1, 6),
-                new THREE.MeshStandardMaterial({
-                    color: biome.crystalColor || 0x00ffff,
-                    emissive: biome.crystalColor || 0x00ffff,
-                    emissiveIntensity: 0.35,
-                    roughness: 0.2
-                }),
+                getWorldSharedResource('world-crystal-geometry', () =>
+                    new THREE.ConeGeometry(0.35, 1, 6)),
+                getWorldSharedResource(`${realmKey}-crystal-material`, () =>
+                    new THREE.MeshStandardMaterial({
+                        color: biome.crystalColor || 0x00ffff,
+                        emissive: biome.crystalColor || 0x00ffff,
+                        emissiveIntensity: 0.35,
+                        roughness: 0.2
+                    })),
                 crystalMatrices,
                 'cover'
             );
             const spikes = createWorldInstancedMesh(
-                new THREE.ConeGeometry(0.55, 1, 5),
-                new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 }),
+                getWorldSharedResource('world-spike-geometry', () =>
+                    new THREE.ConeGeometry(0.55, 1, 5)),
+                getWorldSharedResource('world-spike-material', () =>
+                    new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8 })),
                 spikeMatrices,
                 'decoration'
             );
@@ -2842,14 +2855,17 @@
             if (biome.hasWater && random() < 0.28) {
                 const radius = 3.5 + random() * 3.5;
                 const water = new THREE.Mesh(
-                    new THREE.CircleGeometry(radius, 20),
-                    new THREE.MeshBasicMaterial({
-                        color: biome.waterColor || 0x4a90b8,
-                        transparent: true,
-                        opacity: 0.58,
-                        side: THREE.DoubleSide
-                    })
+                    getWorldSharedResource('world-water-geometry', () =>
+                        new THREE.CircleGeometry(1, 20)),
+                    getWorldSharedResource(`${realmKey}-water-material`, () =>
+                        new THREE.MeshBasicMaterial({
+                            color: biome.waterColor || 0x4a90b8,
+                            transparent: true,
+                            opacity: 0.58,
+                            side: THREE.DoubleSide
+                        }))
                 );
+                water.scale.set(radius, radius, 1);
                 const worldX = originX + 8 + random() * (size - 16);
                 const worldZ = originZ + 8 + random() * (size - 16);
                 water.rotation.x = -Math.PI / 2;
@@ -2860,14 +2876,17 @@
             if (biome.hasLava && random() < 0.34) {
                 const radius = 3 + random() * 3;
                 const lava = new THREE.Mesh(
-                    new THREE.CircleGeometry(radius, 18),
-                    new THREE.MeshBasicMaterial({
-                        color: biome.lavaColor || 0xff4500,
-                        transparent: true,
-                        opacity: 0.88,
-                        side: THREE.DoubleSide
-                    })
+                    getWorldSharedResource('world-lava-geometry', () =>
+                        new THREE.CircleGeometry(1, 18)),
+                    getWorldSharedResource(`${realmKey}-lava-material`, () =>
+                        new THREE.MeshBasicMaterial({
+                            color: biome.lavaColor || 0xff4500,
+                            transparent: true,
+                            opacity: 0.88,
+                            side: THREE.DoubleSide
+                        }))
                 );
+                lava.scale.set(radius, radius, 1);
                 const worldX = originX + 8 + random() * (size - 16);
                 const worldZ = originZ + 8 + random() * (size - 16);
                 lava.rotation.x = -Math.PI / 2;
@@ -2897,7 +2916,13 @@
             worldColliderGrid.delete(key);
         }
 
-        function requestWorldChunks(playerX, playerZ, biome, immediate = false) {
+        function requestWorldChunks(
+            playerX,
+            playerZ,
+            biome,
+            immediate = false,
+            immediateRadius = 1
+        ) {
             const anchorX = getWorldChunkCoordinate(playerX);
             const anchorZ = getWorldChunkCoordinate(playerZ);
             const wanted = [];
@@ -2917,25 +2942,26 @@
                             chunkX,
                             chunkZ,
                             decorativeOnly,
+                            ringDistance: Math.max(Math.abs(dx), Math.abs(dz)),
                             distance: dx * dx + dz * dz
                         });
                     }
                 }
             }
             wanted.sort((a, b) => a.distance - b.distance);
-            if (immediate) {
-                wanted.forEach(item => createWorldChunk(
-                    item.chunkX,
-                    item.chunkZ,
-                    biome,
-                    item.decorativeOnly
-                ));
-            } else {
-                wanted.forEach(item => {
+            wanted.forEach(item => {
+                if (immediate && item.ringDistance <= immediateRadius) {
+                    createWorldChunk(
+                        item.chunkX,
+                        item.chunkZ,
+                        biome,
+                        item.decorativeOnly
+                    );
+                } else {
                     worldChunkQueue.push(item);
                     worldChunkQueuedKeys.add(item.key);
-                });
-            }
+                }
+            });
             [...worldChunks.values()].forEach(chunk => {
                 const distance = Math.max(
                     Math.abs(chunk.chunkX - anchorX),
@@ -2960,6 +2986,7 @@
                 );
                 built++;
             }
+            if (built > 0) needsRender = true;
             return built;
         }
 
@@ -3081,6 +3108,7 @@
             // the moving player; they are not tied to world origin anymore.
             createEnvironmentParticles(biome);
             applySceneQualityVisibility();
+            needsRender = true;
         }
 
         // Legacy bounded-arena scenery builders were removed in Phase 17.
@@ -4382,84 +4410,30 @@
             document.body.classList.remove('mode-hud-visible');
         }
 
-        function getTutorialSteps() {
-            const movementSide = state.leftHanded ? 'lower-right' : 'lower-left';
-            const firingSide = state.leftHanded ? 'lower-left' : 'lower-right';
-            return [
-                {
-                    title: 'Move',
-                    text: `Drag the ${movementSide} area to move your tank. The joystick appears under your thumb.`
-                },
-                {
-                    title: 'Fire',
-                    text: `Hold the ${firingSide} area to fire. Your turret automatically aims at the nearest enemy.`
-                },
-                {
-                    title: 'Choose Upgrades',
-                    text: 'Kills grant XP. Every level pauses the battle and offers three temporary upgrades.'
-                },
-                {
-                    title: 'Earn and Improve',
-                    text: 'Quick kills build combos and permanent coins. Spend coins in the Garage between runs.'
-                }
-            ];
-        }
-
-        function renderTutorialStep() {
-            const steps = getTutorialSteps();
-            const step = steps[state.tutorialStep];
-            document.getElementById('tutorial-step-number').textContent =
-                String(state.tutorialStep + 1);
-            document.getElementById('tutorial-title').textContent = step.title;
-            document.getElementById('tutorial-text').textContent = step.text;
-            document.getElementById('tutorial-next').textContent =
-                state.tutorialStep === steps.length - 1 ? 'Start Battle' : 'Next';
-        }
-
-        function openTutorial(returnTarget = 'playing') {
-            state.tutorialOpen = true;
-            state.tutorialStep = 0;
-            state.tutorialReturnTarget = returnTarget;
-            if (returnTarget === 'playing') state.gamePhase = 'tutorial';
-            setScreenVisibility('settings-screen', false);
-            setScreenVisibility('tutorial-screen', true);
-            setPauseUIVisible(false);
-            syncHUDControls();
-            renderTutorialStep();
-        }
-
-        function finishTutorial() {
-            const returnTarget = state.tutorialReturnTarget;
-            state.tutorialOpen = false;
-            profile.tutorialCompleted = true;
-            saveProfile();
-            setScreenVisibility('tutorial-screen', false);
-            if (returnTarget === 'settings') {
-                state.settingsOpen = true;
-                setScreenVisibility('settings-screen', true);
-                setPauseUIVisible(false);
-            } else {
-                state.gamePhase = 'playing';
-                setPauseUIVisible(true);
-                saveActiveRun();
-            }
-            syncHUDControls();
-        }
-
-        function advanceTutorial() {
-            const steps = getTutorialSteps();
-            if (state.tutorialStep >= steps.length - 1) {
-                finishTutorial();
-                return;
-            }
-            state.tutorialStep++;
-            playUISound();
-            renderTutorialStep();
-        }
-
         function normalizeRunMode(mode) {
             if (mode === 'normal') return 'adventure';
             return GAME_MODE_DEFINITIONS[mode] ? mode : 'adventure';
+        }
+
+        function scheduleRunLoad(action, message = 'Preparing the infinite battlefield…') {
+            if (pendingRunStartTimer !== null) return false;
+            const loader = document.getElementById('app-loading');
+            const status = document.getElementById('loading-status');
+            if (status) status.textContent = message;
+            if (loader) loader.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('run-loading');
+            // Give the browser one paint opportunity before terrain generation.
+            // This makes button taps visibly respond instead of appearing frozen.
+            pendingRunStartTimer = setTimeout(() => {
+                pendingRunStartTimer = null;
+                try {
+                    action();
+                } finally {
+                    document.body.classList.remove('run-loading');
+                    if (loader) loader.setAttribute('aria-hidden', 'true');
+                }
+            }, 40);
+            return true;
         }
 
         function requestNewRun(mode = 'adventure', practiceConfig = null) {
@@ -4470,11 +4444,20 @@
                 state.pendingPracticeConfig = sanitizePracticeConfig(
                     practiceConfig || state.pendingPracticeConfig
                 );
-                startGame({ mode: 'practice', practiceConfig: state.pendingPracticeConfig });
+                scheduleRunLoad(
+                    () => startGame({
+                        mode: 'practice',
+                        practiceConfig: state.pendingPracticeConfig
+                    }),
+                    'Preparing Custom Practice…'
+                );
                 return;
             }
             if (!cachedActiveRun) {
-                startGame({ mode: safeMode });
+                scheduleRunLoad(
+                    () => startGame({ mode: safeMode }),
+                    `Preparing ${getGameModeDefinition(safeMode).name}…`
+                );
                 return;
             }
             state.newRunConfirmOpen = true;
@@ -4491,12 +4474,18 @@
         function startConfirmedNewRun() {
             const mode = normalizeRunMode(state.pendingNewRunMode);
             closeNewRunConfirmation();
-            startGame({ mode });
+            scheduleRunLoad(
+                () => startGame({ mode }),
+                `Preparing ${getGameModeDefinition(mode).name}…`
+            );
         }
 
         function continueConfirmedRun() {
             closeNewRunConfirmation();
-            continueSavedRun();
+            scheduleRunLoad(
+                () => continueSavedRun(),
+                `Restoring ${getGameModeDefinition(cachedActiveRun?.gameMode).name}…`
+            );
         }
 
         function pauseGame() {
@@ -4535,12 +4524,10 @@
             state.dailyOpen = false;
             state.gameModesOpen = false;
             state.practiceOpen = false;
-            state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             clearInputState();
             clearCombatScene();
             setScreenVisibility('upgrade-choice-screen', false);
-            setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
             setScreenVisibility('daily-screen', false);
             setScreenVisibility('game-modes-screen', false);
@@ -5150,7 +5137,6 @@
             state.dailyOpen = false;
             state.gameModesOpen = false;
             state.practiceOpen = false;
-            state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             clearInputState();
 
@@ -5163,7 +5149,6 @@
             updateHUD();
 
             setScreenVisibility('upgrade-choice-screen', false);
-            setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
             setScreenVisibility('daily-screen', false);
             setScreenVisibility('game-modes-screen', false);
@@ -5180,7 +5165,6 @@
             updateModeHUD();
             saveActiveRun();
             if (requestedMode === 'bossHunt') spawnPendingGuardian();
-            if (!profile.tutorialCompleted) openTutorial('playing');
         }
 
         function continueSavedRun() {
@@ -5243,7 +5227,6 @@
             state.dailyOpen = false;
             state.gameModesOpen = false;
             state.practiceOpen = false;
-            state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             state.targetEnemy = null;
             state.cameraShake = 0;
@@ -5292,7 +5275,6 @@
                 if (savedEnemy.objectiveTarget) markObjectiveTarget(enemy);
             });
 
-            setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
             setScreenVisibility('daily-screen', false);
             setScreenVisibility('game-modes-screen', false);
@@ -5317,8 +5299,7 @@
                 syncHUDControls();
                 spawnPendingGuardian();
                 saveActiveRun();
-                if (!profile.tutorialCompleted) openTutorial('playing');
-            }
+                }
             return true;
         }
 
@@ -6399,7 +6380,6 @@
             state.dailyOpen = false;
             state.gameModesOpen = false;
             state.practiceOpen = false;
-            state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             state.comboCount = 0;
             state.comboTimer = 0;
@@ -6419,7 +6399,6 @@
             document.getElementById('final-score').textContent = state.score;
             document.getElementById('final-level').textContent = state.level;
             setScreenVisibility('upgrade-choice-screen', false);
-            setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
             setScreenVisibility('daily-screen', false);
             setScreenVisibility('game-modes-screen', false);
@@ -6441,13 +6420,25 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            needsRender = true;
         }
 
         function animate() {
             requestAnimationFrame(animate);
             const dt = Math.min(clock.getDelta(), 0.1);
-            if (state.gamePhase === 'playing') updatePhysics(dt);
-            renderer.render(scene, camera);
+            if (state.gamePhase === 'playing') {
+                updatePhysics(dt);
+                renderer.render(scene, camera);
+                needsRender = false;
+                return;
+            }
+            if (state.gamePhase === 'menu' && worldChunkQueue.length > 0) {
+                runWorldChunkTasks(BIOMES[state.currentBiome] || BIOMES[0]);
+            }
+            if (needsRender) {
+                renderer.render(scene, camera);
+                needsRender = false;
+            }
         }
 
         function performPhaseDash() {
@@ -6607,7 +6598,7 @@
                 if (state.gamePhase === 'playing') pauseGame();
                 else {
                     clearInputState();
-                    if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused' || state.gamePhase === 'tutorial') {
+                    if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused') {
                         saveActiveRun();
                     }
                 }
@@ -6628,7 +6619,10 @@
 
         document.getElementById('btn-continue').addEventListener('click', (e) => {
             e.stopPropagation();
-            continueSavedRun();
+            scheduleRunLoad(
+                () => continueSavedRun(),
+                `Restoring ${getGameModeDefinition(cachedActiveRun?.gameMode).name}…`
+            );
         });
 
         document.getElementById('btn-garage').addEventListener('click', (e) => {
@@ -6720,22 +6714,14 @@
             closeNewRunConfirmation();
         });
 
-        document.getElementById('tutorial-next').addEventListener('click', (e) => {
-            e.stopPropagation();
-            advanceTutorial();
-        });
-
-        document.getElementById('tutorial-skip').addEventListener('click', (e) => {
-            e.stopPropagation();
-            finishTutorial();
-        });
-
         document.getElementById('btn-restart').addEventListener('click', (e) => {
             e.stopPropagation();
-            startGame({
-                mode: state.gameMode,
-                practiceConfig: state.gameMode === 'practice' ? state.practiceConfig : undefined
-            });
+            const mode = state.gameMode;
+            const practiceConfig = mode === 'practice' ? state.practiceConfig : undefined;
+            scheduleRunLoad(
+                () => startGame({ mode, practiceConfig }),
+                `Restarting ${getGameModeDefinition(mode).name}…`
+            );
         });
 
         document.getElementById('btn-results-garage').addEventListener('click', (e) => {
@@ -6819,11 +6805,6 @@
             toggleHudScale();
         });
 
-        document.getElementById('replay-tutorial-panel').addEventListener('click', (e) => {
-            e.stopPropagation();
-            openTutorial('settings');
-        });
-
         document.getElementById('effects-volume').addEventListener('input', (e) => {
             setEffectsVolume(e.target.value);
         });
@@ -6849,7 +6830,7 @@
             handleAppStateChange(isActive) {
                 if (isActive) return;
                 if (state.gamePhase === 'playing') pauseGame();
-                else if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused' || state.gamePhase === 'tutorial') {
+                else if (state.gamePhase === 'choosing-upgrade' || state.gamePhase === 'paused') {
                     saveActiveRun();
                 }
             },
@@ -6858,7 +6839,6 @@
                     closeNewRunConfirmation();
                     return true;
                 }
-                if (state.tutorialOpen) return true;
                 if (state.practiceOpen) {
                     closePracticeSetup();
                     return true;

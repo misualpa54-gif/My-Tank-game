@@ -23,7 +23,7 @@ Main.tscn
 ├── SaveService
 ├── AudioService
 ├── WorldManager
-│   ├── GroundTilePool
+│   ├── GroundSurface
 │   ├── ChunkStreamer
 │   ├── RealmEnvironment
 │   └── ColliderRegistry
@@ -75,9 +75,9 @@ Prototype constants to preserve initially:
 chunk_size = 48
 active_radius = 2
 retained_radius = 3
-ground_segments_low = 16
-ground_segments_medium = 20
-ground_segments_high = 24
+ground_segments_low = 32
+ground_segments_medium = 48
+ground_segments_high = 64
 max_coordinate = 1,000,000
 enemy_reposition_distance = 100
 enemy_spawn_ring = 42..64
@@ -89,8 +89,8 @@ recent_destroyed_cover_cap = 600
 Godot implementation mapping:
 
 - `WorldManager` owns `world_seed`, active realm, player anchor, and deterministic hash.
-- `GroundTilePool` reuses 25 Medium/Low or 49 High mesh tiles.
-- Native terrain can use ArrayMesh/SurfaceTool or a pooled grid Mesh with updated vertices/normals/colors.
+- `GroundSurface` uses one continuous rebaked mesh centered on the active chunk: 240 world units on Low/Medium and 336 on High. This avoids tile seams and minimizes draw calls/material churn.
+- Native terrain can use ArrayMesh/SurfaceTool or a pooled grid Mesh with updated vertices, stitched normals, and vertex colors.
 - `ChunkStreamer` maintains deterministic chunk records keyed by `Vector2i`.
 - Gameplay chunks use radius 2.
 - High decorative ring has no physics bodies.
@@ -133,8 +133,8 @@ Native migration imports only validated permanent prototype progress. Active web
 
 1. Same seed/chunk/realm creates the same cover IDs and positions.
 2. Moving across chunk boundaries never exposes a hole beneath the player.
-3. Medium retains 5×5 ground/gameplay neighborhood.
-4. High adds a decorative radius-three ring without gameplay collision.
+3. Medium retains one continuous 240-unit ground surface over the 5×5 gameplay neighborhood.
+4. High expands ground to 336 units and adds a decorative radius-three ring without gameplay collision.
 5. Low reduces detail but does not change gameplay cover IDs.
 6. Continue restores seed, player position, local objective anchor, and nearby event state.
 7. Major cover blocks/slides player and steers enemies.
