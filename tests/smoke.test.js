@@ -205,6 +205,7 @@ function createHarness(storageSeed = {}) {
       updateCombo,
       queueGuardianIfNeeded,
       spawnPendingGuardian,
+      spawnBossMinion,
       handleGuardianDefeat,
       updateBossHUD,
       createArtilleryStrike,
@@ -504,7 +505,9 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     api.animate();
     assert.equal(api.renderer().renderCount, renderedAfterDirtyFrame);
     api.quitToMenu();
+    const menuChunkCount = api.worldChunks().size;
     for (let index = 0; index < 30; index++) api.animate();
+    assert.equal(api.worldChunks().size, menuChunkCount);
     const renderedMenuFrame = api.renderer().renderCount;
     api.animate();
     assert.equal(api.renderer().renderCount, renderedMenuFrame);
@@ -582,6 +585,11 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(api.state().realmProgress, 1);
     assert.equal(api.state().currentBiome, 1);
     assert.equal(api.profile().coins, coinsBeforeBonus + 100);
+    assert.equal(api.state().gamePhase, 'playing');
+    assert.ok(api.worldChunks().size >= 1);
+    assert.ok(api.worldChunkQueue().length > 0);
+    for (let index = 0; index < 6; index++) api.updatePhysics(1 / 60);
+    assert.ok(api.worldChunks().size > 1);
     assert.equal(
       document.getElementById('boss-hud').classList.contains('show'),
       false
@@ -876,7 +884,7 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
       const stats = getSceneStats(api.scene());
       assert.ok(stats.meshes < 350, `biome ${i % 6} created ${stats.meshes} meshes`);
       assert.ok(api.environmentColliders().length < 400);
-      assert.ok(api.worldChunks().size >= 9 && api.worldChunks().size <= 25);
+      assert.ok(api.worldChunks().size >= 1 && api.worldChunks().size <= 9);
       assert.ok(api.worldChunkQueue().length > 0);
     }
   });
@@ -1099,6 +1107,26 @@ test('active guardian survives a complete page reload', () => {
   secondSession.dom.window.close();
 });
 
+test('guardian summons remain local after travelling far from world origin', () => {
+  const harness = createHarness();
+  harness.api.startGame();
+  harness.api.player().mesh.position.set(520, 0, -410);
+  harness.api.player().move(0, new harness.window.THREE.Vector2(0, 0));
+  harness.api.state().level = 3;
+  harness.api.queueGuardianIfNeeded();
+  const boss = harness.api.spawnPendingGuardian();
+  assert.ok(boss);
+  harness.api.spawnBossMinion('scout', boss);
+  const minion = harness.api.enemies().find(enemy => enemy !== boss);
+  assert.ok(minion);
+  assert.ok(Math.hypot(
+    minion.mesh.position.x - boss.mesh.position.x,
+    minion.mesh.position.z - boss.mesh.position.z
+  ) <= 7.01);
+  assert.ok(Math.abs(minion.mesh.position.x) > 44);
+  harness.dom.window.close();
+});
+
 test('guardian defeat clears surviving realm threats and hostile hazards', () => {
   const harness = createHarness();
   const { api, window } = harness;
@@ -1241,9 +1269,11 @@ test('additional game modes start with isolated rules and savable mode IDs', () 
 
   api.quitToMenu();
   api.openGameModes();
-  assert.equal(
-    window.document.querySelectorAll('[data-run-mode]').length,
-    4
+  assert.equal(window.document.querySelectorAll('[data-run-mode]').length, 4);
+  assert.equal(window.document.querySelectorAll('.mode-card').length, 5);
+  assert.deepEqual(
+    [...window.document.querySelectorAll('.mode-card strong')].map(node => node.textContent),
+    ['Boss Hunt', 'Last Stand', 'Realm Rush', 'One-Tank Challenge', 'Custom Practice']
   );
   assert.equal(
     window.document.getElementById('game-modes-screen').classList.contains('hidden'),
@@ -1406,7 +1436,7 @@ test('home run buttons paint loading feedback before world construction', () => 
   scheduledStart.callback();
   assert.equal(harness.api.state().gamePhase, 'playing');
   assert.equal(harness.window.document.body.classList.contains('run-loading'), false);
-  assert.ok(harness.api.worldChunks().size >= 9);
+  assert.ok(harness.api.worldChunks().size >= 1);
   harness.dom.window.close();
 });
 

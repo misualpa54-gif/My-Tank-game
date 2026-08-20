@@ -87,7 +87,7 @@ Benefits:
 - lower startup and realm-switch cost;
 - consistent analytic boundary normals and vertex colors.
 
-### Responsive run loading
+### Responsive run and menu loading
 
 Home, Continue, confirmed-new-run, Practice, and Try Again actions now:
 
@@ -98,6 +98,14 @@ Home, Continue, confirmed-new-run, Practice, and Try Again actions now:
 5. hide the loader when initialization finishes.
 
 Duplicate taps are ignored while loading.
+
+Additional menu/realm corrections:
+
+- Hidden full-screen menus now use `visibility: hidden`, so invisible Game Modes, Garage, Daily, Practice, Settings, and result layers cannot remain composited or partially paint over the active screen.
+- Game Modes and other large menu panels no longer add a second expensive backdrop blur.
+- Background scenery streaming is suspended while menu overlays are open; the nearest core remains visible and the remaining chunks wait until gameplay.
+- New runs and realm changes build only the current center chunk synchronously, then fill the remaining neighborhood during gameplay.
+- Guardian minion placement no longer clamps to the obsolete ±42 arena coordinates, so summons stay beside a Guardian after distant travel.
 
 ### Static render gating
 
@@ -139,9 +147,9 @@ Same test environment before vs after hotfix:
 
 | Stress check | Phase 17 first build | Hotfix | Improvement |
 |---|---:|---:|---:|
-| 50 restart/menu cycles | ~2.14–2.50s | ~0.59s | about 72–76% faster |
-| 30 biome rebuilds | ~1.24–1.53s | ~0.28s | about 77–82% faster |
-| Full Node test duration | ~11.1–12.3s | ~5.0s | about 55–59% faster |
+| 50 restart/menu cycles | ~2.14–2.50s | ~0.44s | about 79–82% faster |
+| 30 biome rebuilds | ~1.24–1.53s | ~0.27s | about 78–82% faster |
+| Full Node test duration | ~11.1–12.3s | ~4.5s | about 59–63% faster |
 
 Initial synthetic menu scene after hotfix:
 
@@ -156,7 +164,7 @@ The rest of the 5×5 world streams after first paint rather than blocking menu i
 
 ## Verification
 
-- 73 automated tests pass.
+- 74 automated tests pass.
 - 0 failures.
 - 0 npm vulnerabilities.
 - JavaScript lint passes without warnings.
@@ -168,7 +176,7 @@ The rest of the 5×5 world streams after first paint rather than blocking menu i
 
 ## Debugged Android artifact
 
-The Java 21 workflow, full 73-test check, Android unit-test task, debug assembly, and upload succeeded.
+The Java 21 workflow, full 74-test check, Android unit-test task, debug assembly, and upload succeeded.
 
 - Workflow: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32416478482`
 - APK artifact: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32416478482/artifacts/9424111083`

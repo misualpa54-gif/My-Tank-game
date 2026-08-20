@@ -3134,7 +3134,13 @@
             const centerX = player ? player.mesh.position.x : 0;
             const centerZ = player ? player.mesh.position.z : 0;
             createInfiniteGround(biome, centerX, centerZ);
-            requestWorldChunks(centerX, centerZ, biome, true);
+            requestWorldChunks(
+                centerX,
+                centerZ,
+                biome,
+                true,
+                state.isPlaying ? 0 : 1
+            );
 
             // Ambient particles remain one or two instanced batches and wrap around
             // the moving player; they are not tied to world origin anymore.
@@ -4915,9 +4921,9 @@
             const angle = Math.random() * Math.PI * 2;
             const enemy = new Tank(ENEMY_TYPES[type].color, false, type);
             enemy.mesh.position.set(
-                Math.max(-42, Math.min(42, boss.mesh.position.x + Math.cos(angle) * 7)),
+                boss.mesh.position.x + Math.cos(angle) * 7,
                 0,
-                Math.max(-42, Math.min(42, boss.mesh.position.z + Math.sin(angle) * 7))
+                boss.mesh.position.z + Math.sin(angle) * 7
             );
             enemy.move(0, new THREE.Vector2(0, 0));
             enemies.push(enemy);
@@ -6509,9 +6515,9 @@
                 needsRender = false;
                 return;
             }
-            if (state.gamePhase === 'menu' && worldChunkQueue.length > 0) {
-                runWorldChunkTasks(BIOMES[state.currentBiome] || BIOMES[0]);
-            }
+            // Do not stream scenery behind menu overlays. The nearest 3×3 core is
+            // already visible; deferring the rest prevents partially painted menus
+            // and button stalls on Android WebView.
             if (needsRender) {
                 renderer.render(scene, camera);
                 needsRender = false;

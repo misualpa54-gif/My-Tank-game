@@ -19,6 +19,7 @@ test('portrait HUD has dedicated score, level, and health panels', () => {
 
   assert.match(css, /#start-screen\s*\{\s*justify-content: flex-start/);
   assert.match(css, /\.start-menu-content/);
+  assert.match(css, /\.hidden\s*\{[^}]*visibility: hidden/s);
   assert.match(css, /@media \(orientation: portrait\)/);
   assert.match(css, /grid-template-columns: minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);
   assert.match(css, /#hud-score-panel/);
