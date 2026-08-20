@@ -254,6 +254,22 @@
             { id: 'railgunCore', name: 'Railgun Core', requirements: { piercing: 2, critChance: 3 } }
         ];
         const EVOLUTION_BY_ID = new Map(EVOLUTION_DEFINITIONS.map(item => [item.id, item]));
+        const MASTERY_THRESHOLDS = [0, 100, 300, 700, 1200, 2000];
+        const ACHIEVEMENT_DEFINITIONS = [
+            { id: 'kills100', name: 'Tank Hunter', description: 'Destroy 100 enemies', reward: 200 },
+            { id: 'level10', name: 'Realm Veteran', description: 'Reach level 10', reward: 150 },
+            { id: 'level20', name: 'Realm Legend', description: 'Reach level 20', reward: 300 },
+            { id: 'combo3', name: 'Combo Master', description: 'Reach a ×3 combo', reward: 150 },
+            { id: 'flawlessBoss', name: 'Untouchable Guardian', description: 'Defeat a guardian without taking damage', reward: 300 },
+            { id: 'allTanks', name: 'Full Garage', description: 'Own all three tanks', reward: 500 },
+            { id: 'maxTank', name: 'Fully Tuned', description: 'Max every permanent upgrade on one tank', reward: 500 },
+            { id: 'allTankRuns', name: 'Triple Tour', description: 'Complete a run with every tank', reward: 250 },
+            { id: 'allBiomes', name: 'Realm Explorer', description: 'Visit every biome', reward: 400 },
+            { id: 'medics10', name: 'Supply Breaker', description: 'Destroy 10 Medics', reward: 200 }
+        ];
+        const ACHIEVEMENT_BY_ID = new Map(
+            ACHIEVEMENT_DEFINITIONS.map(achievement => [achievement.id, achievement])
+        );
         const SAVE_VERSION = 1;
         const PROFILE_STORAGE_KEY = 'tank_realms_profile_v1';
         const ACTIVE_RUN_STORAGE_KEY = 'tank_realms_active_run_v1';
@@ -406,6 +422,36 @@
             );
         }
 
+        function createDefaultMasteryRecord() {
+            return {
+                kills: 0,
+                totalScore: 0,
+                bosses: 0,
+                highestLevel: 1,
+                highestCombo: 0,
+                runsCompleted: 0
+            };
+        }
+
+        function createDefaultMasteryCollection() {
+            return Object.fromEntries(
+                TANK_DESIGN_LIST.map(tank => [tank.id, createDefaultMasteryRecord()])
+            );
+        }
+
+        function createDefaultLifetimeStats() {
+            return {
+                kills: 0,
+                medics: 0,
+                bosses: 0,
+                flawlessBosses: 0,
+                maxCombo: 0,
+                highestLevel: 1,
+                visitedBiomes: [],
+                completedTanks: []
+            };
+        }
+
         function createDefaultProfile() {
             return {
                 version: SAVE_VERSION,
@@ -415,6 +461,9 @@
                 ownedTanks: ['vanguard'],
                 selectedTankId: 'vanguard',
                 tankUpgrades: createDefaultTankUpgradeCollection(),
+                tankMastery: createDefaultMasteryCollection(),
+                achievements: {},
+                lifetimeStats: createDefaultLifetimeStats(),
                 tutorialCompleted: false,
                 settings: {
                     soundEnabled: false,
@@ -437,6 +486,7 @@
                 highestCombo: 0,
                 coinsEarned: 0,
                 elapsedSeconds: 0,
+                damageTaken: 0,
                 upgradeHistory: []
             };
         }
@@ -489,6 +539,7 @@
             hudScale: 'normal',
             settingsOpen: false,
             garageOpen: false,
+            achievementsOpen: false,
             tutorialOpen: false,
             tutorialStep: 0,
             tutorialReturnTarget: 'playing',
@@ -498,6 +549,8 @@
             evolutions: [],
             abilityState: createDefaultAbilityState(),
             runTankId: 'vanguard',
+            runMasteryLevel: 1,
+            activeBossDamageBaseline: 0,
             runPermanentUpgrades: createDefaultPermanentUpgradeTiers(),
             runBaseStats: createDefaultPlayerStats(),
             comboCount: 0,
@@ -883,6 +936,54 @@
             }
         }
 
+        function sanitizeMasteryRecord(savedRecord) {
+            return {
+                kills: clampSavedNumber(savedRecord?.kills, 0, 1e12, 0, true),
+                totalScore: clampSavedNumber(savedRecord?.totalScore, 0, 1e15, 0, true),
+                bosses: clampSavedNumber(savedRecord?.bosses, 0, 1e9, 0, true),
+                highestLevel: clampSavedNumber(savedRecord?.highestLevel, 1, 10000, 1, true),
+                highestCombo: clampSavedNumber(savedRecord?.highestCombo, 0, 1000, 0, true),
+                runsCompleted: clampSavedNumber(savedRecord?.runsCompleted, 0, 1e9, 0, true)
+            };
+        }
+
+        function sanitizeLifetimeStats(savedStats) {
+            return {
+                kills: clampSavedNumber(savedStats?.kills, 0, 1e12, 0, true),
+                medics: clampSavedNumber(savedStats?.medics, 0, 1e9, 0, true),
+                bosses: clampSavedNumber(savedStats?.bosses, 0, 1e9, 0, true),
+                flawlessBosses: clampSavedNumber(savedStats?.flawlessBosses, 0, 1e9, 0, true),
+                maxCombo: clampSavedNumber(savedStats?.maxCombo, 0, 1000, 0, true),
+                highestLevel: clampSavedNumber(savedStats?.highestLevel, 1, 10000, 1, true),
+                visitedBiomes: [...new Set(
+                    Array.isArray(savedStats?.visitedBiomes)
+                        ? savedStats.visitedBiomes
+                            .map(value => clampSavedNumber(value, 0, BIOMES.length - 1, 0, true))
+                        : []
+                )],
+                completedTanks: [...new Set(
+                    Array.isArray(savedStats?.completedTanks)
+                        ? savedStats.completedTanks.filter(tankId => TANK_DESIGNS[tankId])
+                        : []
+                )]
+            };
+        }
+
+        function getMasteryPoints(record) {
+            return record.kills + Math.floor(record.totalScore / 100) +
+                record.bosses * 25 + record.highestLevel * 5 +
+                record.highestCombo * 3 + record.runsCompleted * 20;
+        }
+
+        function getMasteryLevel(record) {
+            const points = getMasteryPoints(record);
+            let level = 1;
+            MASTERY_THRESHOLDS.forEach((threshold, index) => {
+                if (points >= threshold) level = index + 1;
+            });
+            return Math.min(MASTERY_THRESHOLDS.length, level);
+        }
+
         function sanitizeProfile(savedProfile) {
             const safeProfile = createDefaultProfile();
             if (!savedProfile || savedProfile.version !== SAVE_VERSION) return safeProfile;
@@ -903,7 +1004,16 @@
                 safeProfile.tankUpgrades[tank.id] = sanitizePermanentUpgradeTiers(
                     savedProfile.tankUpgrades?.[tank.id]
                 );
+                safeProfile.tankMastery[tank.id] = sanitizeMasteryRecord(
+                    savedProfile.tankMastery?.[tank.id]
+                );
             });
+            ACHIEVEMENT_DEFINITIONS.forEach(achievement => {
+                if (savedProfile.achievements?.[achievement.id] === true) {
+                    safeProfile.achievements[achievement.id] = true;
+                }
+            });
+            safeProfile.lifetimeStats = sanitizeLifetimeStats(savedProfile.lifetimeStats);
             safeProfile.settings.soundEnabled = savedProfile.settings?.soundEnabled === true;
             safeProfile.settings.cameraMode = savedProfile.settings?.cameraMode === 'wide' ? 'wide' : 'follow';
             safeProfile.tutorialCompleted = savedProfile.tutorialCompleted === true;
@@ -952,6 +1062,138 @@
             saveProfile();
         }
 
+        function isAnyTankFullyUpgraded() {
+            return TANK_DESIGN_LIST.some(tank =>
+                PERMANENT_UPGRADE_DEFINITIONS.every(upgrade =>
+                    profile.tankUpgrades[tank.id][upgrade.id] >= upgrade.maxTier
+                )
+            );
+        }
+
+        function unlockAchievement(achievementId) {
+            if (profile.achievements[achievementId]) return false;
+            const achievement = ACHIEVEMENT_BY_ID.get(achievementId);
+            if (!achievement) return false;
+            profile.achievements[achievementId] = true;
+            profile.coins += achievement.reward;
+            showUpgradeNotification(`🏅 ${achievement.name}  💰 +${achievement.reward}`);
+            playGameSound('unlock');
+            triggerHaptic('medium');
+            return true;
+        }
+
+        function checkAchievements() {
+            const stats = profile.lifetimeStats;
+            if (stats.kills >= 100) unlockAchievement('kills100');
+            if (stats.highestLevel >= 10) unlockAchievement('level10');
+            if (stats.highestLevel >= 20) unlockAchievement('level20');
+            if (stats.maxCombo >= 11) unlockAchievement('combo3');
+            if (stats.flawlessBosses >= 1) unlockAchievement('flawlessBoss');
+            if (profile.ownedTanks.length >= TANK_DESIGN_LIST.length) {
+                unlockAchievement('allTanks');
+            }
+            if (isAnyTankFullyUpgraded()) unlockAchievement('maxTank');
+            if (stats.completedTanks.length >= TANK_DESIGN_LIST.length) {
+                unlockAchievement('allTankRuns');
+            }
+            if (stats.visitedBiomes.length >= BIOMES.length) unlockAchievement('allBiomes');
+            if (stats.medics >= 10) unlockAchievement('medics10');
+            saveProfile();
+        }
+
+        function updateMasteryOnKill(enemy, scoreReward) {
+            const mastery = profile.tankMastery[state.runTankId];
+            mastery.kills++;
+            mastery.totalScore += scoreReward;
+            mastery.highestCombo = Math.max(mastery.highestCombo, state.comboCount);
+            if (enemy.type === 'healer') profile.lifetimeStats.medics++;
+            profile.lifetimeStats.kills++;
+            profile.lifetimeStats.maxCombo = Math.max(
+                profile.lifetimeStats.maxCombo,
+                state.comboCount
+            );
+        }
+
+        function updateMasteryOnGuardianDefeat() {
+            profile.tankMastery[state.runTankId].bosses++;
+            profile.lifetimeStats.bosses++;
+            if (state.runStats.damageTaken <= state.activeBossDamageBaseline) {
+                profile.lifetimeStats.flawlessBosses++;
+            }
+        }
+
+        function finalizeRunMastery() {
+            const mastery = profile.tankMastery[state.runTankId];
+            mastery.highestLevel = Math.max(mastery.highestLevel, state.level);
+            mastery.highestCombo = Math.max(
+                mastery.highestCombo,
+                state.runStats.highestCombo
+            );
+            mastery.runsCompleted++;
+            profile.lifetimeStats.highestLevel = Math.max(
+                profile.lifetimeStats.highestLevel,
+                state.level
+            );
+            if (!profile.lifetimeStats.completedTanks.includes(state.runTankId)) {
+                profile.lifetimeStats.completedTanks.push(state.runTankId);
+            }
+            checkAchievements();
+        }
+
+        function getMasteryProgress(record) {
+            const level = getMasteryLevel(record);
+            const points = getMasteryPoints(record);
+            const currentThreshold = MASTERY_THRESHOLDS[level - 1];
+            const nextThreshold = level < MASTERY_THRESHOLDS.length
+                ? MASTERY_THRESHOLDS[level]
+                : currentThreshold;
+            const progress = level >= MASTERY_THRESHOLDS.length
+                ? 1
+                : (points - currentThreshold) / (nextThreshold - currentThreshold);
+            return { level, points, nextThreshold, progress };
+        }
+
+        function renderAchievements() {
+            document.getElementById('achievement-coins').textContent =
+                formatCompactNumber(profile.coins);
+            const list = document.getElementById('achievements-list');
+            list.replaceChildren();
+            ACHIEVEMENT_DEFINITIONS.forEach(achievement => {
+                const unlocked = profile.achievements[achievement.id] === true;
+                const card = document.createElement('article');
+                card.className = `achievement-card${unlocked ? ' unlocked' : ''}`;
+                const icon = document.createElement('div');
+                icon.className = 'achievement-icon';
+                icon.textContent = unlocked ? '🏆' : '🔒';
+                const info = document.createElement('div');
+                info.className = 'achievement-info';
+                const name = document.createElement('strong');
+                name.textContent = achievement.name;
+                const description = document.createElement('span');
+                description.textContent = achievement.description;
+                info.append(name, description);
+                const reward = document.createElement('div');
+                reward.className = 'achievement-reward';
+                reward.textContent = unlocked ? 'Complete' : `💰 ${achievement.reward}`;
+                card.append(icon, info, reward);
+                list.appendChild(card);
+            });
+        }
+
+        function openAchievements() {
+            if (state.gamePhase !== 'menu') return;
+            state.achievementsOpen = true;
+            renderAchievements();
+            setScreenVisibility('start-screen', false);
+            setScreenVisibility('achievements-screen', true);
+        }
+
+        function closeAchievements() {
+            state.achievementsOpen = false;
+            setScreenVisibility('achievements-screen', false);
+            setScreenVisibility('start-screen', true);
+        }
+
         function sanitizePosition(savedPosition) {
             return {
                 x: clampSavedNumber(savedPosition?.x, -44, 44, 0),
@@ -965,6 +1207,7 @@
                 highestCombo: clampSavedNumber(savedStats?.highestCombo, 0, 1000, 0, true),
                 coinsEarned: clampSavedNumber(savedStats?.coinsEarned, 0, 1e12, 0, true),
                 elapsedSeconds: clampSavedNumber(savedStats?.elapsedSeconds, 0, 1e9, 0),
+                damageTaken: clampSavedNumber(savedStats?.damageTaken, 0, 1e12, 0),
                 upgradeHistory: Array.isArray(savedStats?.upgradeHistory)
                     ? savedStats.upgradeHistory.filter(id => UPGRADE_BY_ID.has(id)).slice(0, 1000)
                     : []
@@ -1060,6 +1303,13 @@
                 evolutions: deriveUnlockedEvolutions(upgradeTiers),
                 abilityState: sanitizeAbilityState(savedRun.abilityState),
                 runTankId,
+                runMasteryLevel: clampSavedNumber(savedRun.runMasteryLevel, 1, 6, 1, true),
+                activeBossDamageBaseline: clampSavedNumber(
+                    savedRun.activeBossDamageBaseline,
+                    0,
+                    1e12,
+                    0
+                ),
                 runPermanentUpgrades,
                 runBaseStats,
                 comboCount: clampSavedNumber(savedRun.comboCount, 0, 1000, 0, true),
@@ -1132,6 +1382,8 @@
                 evolutions: [...state.evolutions],
                 abilityState: { ...state.abilityState, lastMoveTapAt: 0 },
                 runTankId: state.runTankId,
+                runMasteryLevel: state.runMasteryLevel,
+                activeBossDamageBaseline: state.activeBossDamageBaseline,
                 runPermanentUpgrades: { ...state.runPermanentUpgrades },
                 comboCount: state.comboCount,
                 comboTimer: state.comboTimer,
@@ -1166,6 +1418,14 @@
             cachedActiveRun = sanitizeActiveRun(snapshot);
             profile.bestScore = Math.max(profile.bestScore, Math.floor(state.score));
             profile.bestLevel = Math.max(profile.bestLevel, Math.floor(state.level));
+            const mastery = profile.tankMastery[state.runTankId];
+            mastery.highestLevel = Math.max(mastery.highestLevel, state.level);
+            mastery.highestCombo = Math.max(mastery.highestCombo, state.runStats.highestCombo);
+            profile.lifetimeStats.highestLevel = Math.max(
+                profile.lifetimeStats.highestLevel,
+                state.level
+            );
+            checkAchievements();
             saveProfile();
             updateContinueButton();
             return true;
@@ -1509,6 +1769,7 @@
             profile.selectedTankId = tankId;
             playGameSound('unlock');
             triggerHaptic('heavy');
+            checkAchievements();
             saveProfile();
             updateHUD();
             renderGarage();
@@ -1535,6 +1796,7 @@
             tankTiers[upgrade.id]++;
             playGameSound('purchase');
             triggerHaptic('medium');
+            checkAchievements();
             saveProfile();
             updateHUD();
             renderGarage();
@@ -1594,6 +1856,28 @@
                 }
                 top.appendChild(action);
                 card.appendChild(top);
+
+                const mastery = profile.tankMastery[tank.id];
+                const masteryProgress = getMasteryProgress(mastery);
+                const masterySummary = document.createElement('div');
+                masterySummary.className = 'mastery-summary';
+                const masteryRow = document.createElement('div');
+                masteryRow.className = 'mastery-summary-row';
+                const masteryLabel = document.createElement('span');
+                masteryLabel.textContent = `Mastery ${masteryProgress.level}`;
+                const masteryPoints = document.createElement('span');
+                masteryPoints.textContent = masteryProgress.level >= MASTERY_THRESHOLDS.length
+                    ? 'MAX'
+                    : `${masteryProgress.points} / ${masteryProgress.nextThreshold}`;
+                masteryRow.append(masteryLabel, masteryPoints);
+                const masteryTrack = document.createElement('div');
+                masteryTrack.className = 'mastery-progress-track';
+                const masteryFill = document.createElement('div');
+                masteryFill.className = 'mastery-progress-fill';
+                masteryFill.style.width = `${Math.round(masteryProgress.progress * 100)}%`;
+                masteryTrack.appendChild(masteryFill);
+                masterySummary.append(masteryRow, masteryTrack);
+                card.appendChild(masterySummary);
 
                 const upgrades = document.createElement('div');
                 upgrades.className = 'tank-upgrades';
@@ -1665,6 +1949,11 @@
         function loadBiome(biomeIndex) {
             const biome = BIOMES[biomeIndex % BIOMES.length];
             state.currentBiome = biomeIndex % BIOMES.length;
+            if (state.isPlaying &&
+                !profile.lifetimeStats.visitedBiomes.includes(state.currentBiome)) {
+                profile.lifetimeStats.visitedBiomes.push(state.currentBiome);
+                checkAchievements();
+            }
 
             // Release the previous biome's CPU and GPU resources before building
             // the next one. Removing an object from a Three.js scene alone is not
@@ -2423,6 +2712,7 @@
                 this.isPlayer = isPlayer;
                 this.type = type;
                 this.designId = isPlayer && TANK_DESIGNS[designId] ? designId : 'vanguard';
+                this.masteryLevel = isPlayer ? state.runMasteryLevel : 1;
                 this.typeData = isPlayer ? null : ENEMY_TYPES[type];
 
                 const scale = isPlayer ? 1 : (this.typeData?.size || 1);
@@ -2707,6 +2997,59 @@
                     });
                 }
 
+                if (isPlayer && this.masteryLevel >= 2) {
+                    const masteryColor = TANK_DESIGNS[this.designId].accentColor;
+                    const masteryMat = new THREE.MeshStandardMaterial({
+                        color: masteryColor,
+                        emissive: this.masteryLevel >= 5 ? masteryColor : 0x000000,
+                        emissiveIntensity: this.masteryLevel >= 5 ? 0.35 : 0,
+                        metalness: 0.7,
+                        roughness: 0.3
+                    });
+                    [-1, 1].forEach(side => {
+                        const stripe = new THREE.Mesh(
+                            new THREE.BoxGeometry(0.16, 0.12, 2.7),
+                            masteryMat
+                        );
+                        stripe.position.set(side * 0.72, 1.48, 0.05);
+                        this.mesh.add(stripe);
+                    });
+
+                    if (this.masteryLevel >= 3) {
+                        const underglow = new THREE.Mesh(
+                            new THREE.RingGeometry(2.9, 3.15, 40),
+                            new THREE.MeshBasicMaterial({
+                                color: masteryColor,
+                                transparent: true,
+                                opacity: 0.42,
+                                side: THREE.DoubleSide
+                            })
+                        );
+                        underglow.rotation.x = -Math.PI / 2;
+                        underglow.position.y = 0.08;
+                        this.mesh.add(underglow);
+                    }
+
+                    if (this.masteryLevel >= 4) {
+                        const antennaLight = new THREE.Mesh(
+                            new THREE.SphereGeometry(0.1, 8, 6),
+                            new THREE.MeshBasicMaterial({ color: masteryColor })
+                        );
+                        antennaLight.position.set(-0.72, 2.85, -0.65);
+                        this.mesh.add(antennaLight);
+                    }
+
+                    if (this.masteryLevel >= 6) {
+                        const crown = new THREE.Mesh(
+                            new THREE.TorusGeometry(0.5, 0.08, 6, 20),
+                            new THREE.MeshBasicMaterial({ color: 0xfacc15 })
+                        );
+                        crown.rotation.x = Math.PI / 2;
+                        crown.position.set(0, 3.1, -0.15);
+                        this.mesh.add(crown);
+                    }
+                }
+
                 // Player indicator ring
                 if (isPlayer) {
                     const ringGeo = new THREE.RingGeometry(2.5, 2.8, 32);
@@ -2869,6 +3212,7 @@
                 });
 
                 if (this.hp <= 0 && !this.isDead) this.die();
+                return actualDamage;
             }
 
             heal(amount) {
@@ -2916,7 +3260,11 @@
             return new THREE.SphereGeometry(size);
         }
 
-        function createBulletVisual(bulletColor, projectileStyle = 'orb') {
+        function createBulletVisual(
+            bulletColor,
+            projectileStyle = 'orb',
+            masteryTrail = false
+        ) {
             const bulletGroup = new THREE.Group();
 
             const core = new THREE.Mesh(
@@ -2948,9 +3296,9 @@
             const trail = new THREE.Mesh(
                 new THREE.CylinderGeometry(0.15, 0.08, 2.0, 8),
                 new THREE.MeshBasicMaterial({
-                    color: bulletColor,
+                    color: masteryTrail ? 0xffffff : bulletColor,
                     transparent: true,
-                    opacity: 0.6
+                    opacity: masteryTrail ? 0.88 : 0.6
                 })
             );
             trail.rotation.x = Math.PI / 2;
@@ -2970,19 +3318,24 @@
                 trail,
                 color: bulletColor,
                 projectileStyle,
-                poolKey: `${bulletColor}-${projectileStyle}`,
+                masteryTrail,
+                poolKey: `${bulletColor}-${projectileStyle}-${masteryTrail ? 'mastery' : 'normal'}`,
                 previousPosition: new THREE.Vector3(),
                 frameEndPosition: new THREE.Vector3(),
                 hitEnemyIds: new Set()
             };
         }
 
-        function acquireBulletVisual(bulletColor, projectileStyle = 'orb') {
-            const poolKey = `${bulletColor}-${projectileStyle}`;
+        function acquireBulletVisual(
+            bulletColor,
+            projectileStyle = 'orb',
+            masteryTrail = false
+        ) {
+            const poolKey = `${bulletColor}-${projectileStyle}-${masteryTrail ? 'mastery' : 'normal'}`;
             const poolIndex = bulletPool.findIndex(bullet => bullet.poolKey === poolKey);
             const bullet = poolIndex >= 0
                 ? bulletPool.splice(poolIndex, 1)[0]
-                : createBulletVisual(bulletColor, projectileStyle);
+                : createBulletVisual(bulletColor, projectileStyle, masteryTrail);
 
             bullet.group.scale.set(1, 1, 1);
             bullet.group.children[0].scale.set(1, 1, 1);
@@ -3053,8 +3406,13 @@
                     ? playerDesign.projectileColor
                     : source.type === 'healer' ? 0x00ff00 : 0xff4444;
                 const projectileStyle = playerDesign ? playerDesign.projectileStyle : 'orb';
+                const masteryTrail = Boolean(source.isPlayer && source.masteryLevel >= 5);
 
-                const bullet = acquireBulletVisual(bulletColor, projectileStyle);
+                const bullet = acquireBulletVisual(
+                    bulletColor,
+                    projectileStyle,
+                    masteryTrail
+                );
                 const bulletGroup = bullet.group;
 
                 // Position at muzzle
@@ -3552,6 +3910,7 @@
             state.gamePhase = 'menu';
             state.settingsOpen = false;
             state.garageOpen = false;
+            state.achievementsOpen = false;
             state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             clearInputState();
@@ -3559,6 +3918,7 @@
             setScreenVisibility('upgrade-choice-screen', false);
             setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
+            setScreenVisibility('achievements-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('pause-screen', false);
@@ -3827,6 +4187,7 @@
             boss.nextBossSpecialTime = now + 6;
             enemies.push(boss);
             activeBoss = boss;
+            state.activeBossDamageBaseline = state.runStats.damageTaken;
             state.guardianPending = false;
 
             document.getElementById('boss-warning-name').textContent = data.name;
@@ -3892,6 +4253,7 @@
             const bonusCoins = boss.typeData.bossCoins;
             profile.coins += bonusCoins;
             state.runStats.coinsEarned += bonusCoins;
+            updateMasteryOnGuardianDefeat();
             state.realmProgress++;
             state.guardianPending = false;
             activeBoss = null;
@@ -3900,6 +4262,7 @@
             showUpgradeNotification(`🏆 Realm cleared!  💰 +${bonusCoins}`);
             playGameSound('unlock');
             triggerHaptic('heavy');
+            checkAchievements();
             saveProfile();
             startRealmObjectiveIfNeeded();
             queueGuardianIfNeeded();
@@ -3956,6 +4319,8 @@
             state.runTankId = profile.ownedTanks.includes(profile.selectedTankId)
                 ? profile.selectedTankId
                 : 'vanguard';
+            state.runMasteryLevel = getMasteryLevel(profile.tankMastery[state.runTankId]);
+            state.activeBossDamageBaseline = 0;
             state.runPermanentUpgrades = sanitizePermanentUpgradeTiers(
                 profile.tankUpgrades[state.runTankId]
             );
@@ -3973,6 +4338,7 @@
             state.cameraShake = 0;
             state.settingsOpen = false;
             state.garageOpen = false;
+            state.achievementsOpen = false;
             state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             clearInputState();
@@ -3985,6 +4351,7 @@
             setScreenVisibility('upgrade-choice-screen', false);
             setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
+            setScreenVisibility('achievements-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('start-screen', false);
             setScreenVisibility('settings-screen', false);
@@ -4022,6 +4389,8 @@
             state.evolutions = [...savedRun.evolutions];
             state.abilityState = { ...savedRun.abilityState };
             state.runTankId = savedRun.runTankId;
+            state.runMasteryLevel = savedRun.runMasteryLevel;
+            state.activeBossDamageBaseline = savedRun.activeBossDamageBaseline;
             state.runPermanentUpgrades = { ...savedRun.runPermanentUpgrades };
             state.runBaseStats = { ...savedRun.runBaseStats };
             state.playerStats = { ...savedRun.playerStats };
@@ -4035,6 +4404,7 @@
             state.gamePhase = 'playing';
             state.settingsOpen = false;
             state.garageOpen = false;
+            state.achievementsOpen = false;
             state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             state.targetEnemy = null;
@@ -4084,6 +4454,7 @@
 
             setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
+            setScreenVisibility('achievements-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('start-screen', false);
             setScreenVisibility('settings-screen', false);
@@ -4300,7 +4671,7 @@
             updateComboIndicator();
         }
 
-        function awardEnemyKill(basePoints) {
+        function awardEnemyKill(basePoints, defeatedEnemy = null) {
             state.comboCount = state.comboTimer > 0 ? state.comboCount + 1 : 1;
             state.comboTimer = 3;
             state.comboMultiplier = getComboMultiplier(state.comboCount);
@@ -4314,6 +4685,7 @@
                 state.comboCount
             );
             state.runStats.coinsEarned += coinReward;
+            if (defeatedEnemy) updateMasteryOnKill(defeatedEnemy, scoreReward);
             if (state.playerStats.repairBurst > 0 && state.runStats.kills % 5 === 0 && player) {
                 const repairAmount = player.maxHp * 0.03 * state.playerStats.repairBurst;
                 player.hp = Math.min(player.maxHp, player.hp + repairAmount);
@@ -4322,6 +4694,7 @@
             profile.coins += coinReward;
             playGameSound('coin');
             if (state.comboCount >= 2) playGameSound('combo');
+            checkAchievements();
             saveProfile();
             updateComboIndicator();
             updateHUD();
@@ -4407,7 +4780,8 @@
 
         function applyPlayerDamage(amount, impactPosition, color = 0xff4444) {
             if (!player || player.isDead) return;
-            player.takeDamage(amount);
+            const actualDamage = player.takeDamage(amount);
+            state.runStats.damageTaken += actualDamage;
             recordObjectivePlayerDamage();
             playGameSound('damage');
             triggerHaptic('medium');
@@ -4515,7 +4889,7 @@
             recordObjectiveKill(enemy);
             const enemyData = ENEMY_TYPES[enemy.type] || {};
             const points = enemyData.points || 100;
-            const rewards = awardEnemyKill(points);
+            const rewards = awardEnemyKill(points, enemy);
             addXP(enemyData.xpReward ?? points / 2);
             const guardianBonus = enemyData.isBoss ? handleGuardianDefeat(enemy) : 0;
             showScorePopup(
@@ -4854,17 +5228,11 @@
                                 playerHitTime
                             );
                             b.group.position.copy(bulletImpactPosition);
-                            player.takeDamage(b.group.userData.damage);
-                            recordObjectivePlayerDamage();
-                            playGameSound('damage');
-                            triggerHaptic('medium');
-                            createExplosion(b.group.position, 14, 0x4ade80, 'armor');
-
-                            document.getElementById('damage-overlay').style.opacity = String(0.5 * getFlashScale());
-                            setTimeout(() => document.getElementById('damage-overlay').style.opacity = '0', 150);
-
-                            updateHUD();
-                            if (player.hp <= 0) endGame();
+                            applyPlayerDamage(
+                                b.group.userData.damage,
+                                b.group.position,
+                                0x4ade80
+                            );
                             hit = true;
                         }
                     }
@@ -5063,6 +5431,7 @@
             state.gamePhase = 'gameover';
             state.settingsOpen = false;
             state.garageOpen = false;
+            state.achievementsOpen = false;
             state.tutorialOpen = false;
             state.newRunConfirmOpen = false;
             state.comboCount = 0;
@@ -5074,6 +5443,7 @@
             state.currentUpgradeChoices = [];
             clearInputState();
             renderRunResults();
+            finalizeRunMastery();
             updateBestProfile();
             clearActiveRunSave();
             document.getElementById('final-score').textContent = state.score;
@@ -5081,6 +5451,7 @@
             setScreenVisibility('upgrade-choice-screen', false);
             setScreenVisibility('tutorial-screen', false);
             setScreenVisibility('new-run-confirm-screen', false);
+            setScreenVisibility('achievements-screen', false);
             setScreenVisibility('garage-screen', false);
             setScreenVisibility('settings-screen', false);
             setScreenVisibility('pause-screen', false);
@@ -5284,6 +5655,16 @@
             openGarage();
         });
 
+        document.getElementById('btn-achievements').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openAchievements();
+        });
+
+        document.getElementById('btn-close-achievements').addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeAchievements();
+        });
+
         document.getElementById('btn-close-garage').addEventListener('click', (e) => {
             e.stopPropagation();
             closeGarage();
@@ -5445,6 +5826,10 @@
                     return true;
                 }
                 if (state.tutorialOpen) return true;
+                if (state.achievementsOpen) {
+                    closeAchievements();
+                    return true;
+                }
                 if (state.garageOpen) {
                     closeGarage();
                     return true;

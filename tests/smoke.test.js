@@ -157,6 +157,14 @@ function createHarness(storageSeed = {}) {
       applyUpgradeChoice,
       deriveUnlockedEvolutions,
       getStatsFromUpgradeTiers,
+      getMasteryLevel,
+      getMasteryPoints,
+      checkAchievements,
+      updateMasteryOnKill,
+      finalizeRunMastery,
+      renderAchievements,
+      openAchievements,
+      closeAchievements,
       performPhaseDash,
       awardEnemyKill,
       updateCombo,
@@ -481,6 +489,7 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
       document.getElementById('boss-hud').classList.contains('show'),
       true
     );
+    api.profile().achievements.flawlessBoss = true;
     const coinsBeforeBonus = api.profile().coins;
     boss.takeDamage(1e9);
     assert.equal(api.handleGuardianDefeat(boss), 100);
@@ -970,6 +979,56 @@ test('run results summarize local balance statistics', () => {
   assert.equal(document.getElementById('result-time').textContent, '2:05');
   assert.equal(document.getElementById('result-upgrades').textContent, '3');
   assert.match(document.getElementById('result-record').textContent, /New best/);
+  harness.dom.window.close();
+});
+
+test('tank mastery grows independently and unlocks cosmetic levels', () => {
+  const harness = createHarness();
+  const record = harness.api.profile().tankMastery.vanguard;
+  assert.equal(harness.api.getMasteryLevel(record), 1);
+  record.kills = 100;
+  assert.ok(harness.api.getMasteryPoints(record) >= 100);
+  assert.equal(harness.api.getMasteryLevel(record), 2);
+  harness.api.startGame();
+  assert.equal(harness.api.state().runMasteryLevel, 2);
+  assert.equal(harness.api.player().masteryLevel, 2);
+  const beforeChildren = harness.api.player().mesh.children.length;
+  assert.ok(beforeChildren > 20);
+  harness.dom.window.close();
+});
+
+test('ten offline achievements unlock once and award coins', () => {
+  const harness = createHarness();
+  const profile = harness.api.profile();
+  profile.lifetimeStats = {
+    kills: 100,
+    medics: 10,
+    bosses: 6,
+    flawlessBosses: 1,
+    maxCombo: 11,
+    highestLevel: 20,
+    visitedBiomes: [0, 1, 2, 3, 4, 5],
+    completedTanks: ['vanguard', 'ember', 'azure']
+  };
+  profile.ownedTanks = ['vanguard', 'ember', 'azure'];
+  profile.tankUpgrades.vanguard = {
+    maxHp: 5,
+    damage: 5,
+    speed: 5,
+    armor: 5,
+    fireRate: 5
+  };
+  harness.api.checkAchievements();
+  assert.equal(Object.keys(profile.achievements).length, 10);
+  assert.equal(profile.coins, 2950);
+  harness.api.openAchievements();
+  assert.equal(
+    harness.window.document.querySelectorAll('.achievement-card.unlocked').length,
+    10
+  );
+  const coinsAfterFirstCheck = profile.coins;
+  harness.api.checkAchievements();
+  assert.equal(profile.coins, coinsAfterFirstCheck);
   harness.dom.window.close();
 });
 

@@ -4,17 +4,17 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phases 1–11 provide the stable offline APK plus optimization, saves, upgrades, economy, tanks, quality, audio/accessibility, guardians, strategic enemies, and objectives. Phase 12 expands run builds and evolutions:
+Phases 1–12 provide the stable offline APK plus optimization, saves, economy, tanks, quality, accessibility, bosses, strategic enemies, objectives, trade-offs and build evolutions. Phase 13 adds permanent mastery and achievements:
 
-- Piercing, Explosive, Ricochet, Homing, and Critical projectile upgrades create distinct weapon builds;
-- Emergency Shield, Reactive Armor, Last Stand, and Repair Burst add capped defensive options;
-- Turbo Tracks and a double-tap Phase Dash add movement options;
-- Lightweight Frame trades 20 health for 25% speed;
-- Plasma Barrage, Fortress Protocol, Mobile Repair Unit, Inferno Cannon, and Railgun Core unlock from related high-tier combinations;
-- area-damage and piercing kills use the same reward, XP, objective, combo, and guardian progression path as direct kills;
-- pooled projectiles reset special counters and enemy-hit history safely;
-- expanded tiers, derived evolutions, shield recharges, damage timer, and dash cooldown survive Continue/reload;
-- all previous strategic enemy, objective, guardian, quality, saving, garage, portrait, performance, consistency, audio, accessibility, offline, and Android behavior remains active.
+- Verdant Vanguard, Ember Warden and Azure Bastion each track separate kills, score, guardians, level, combo and completed runs;
+- six mastery levels unlock accent stripes, track underglow, antenna beacon, bright projectile trail and a gold mastery crown;
+- the Garage displays each tank’s mastery level and progress;
+- ten offline achievements reward kills, levels, ×3 combo, a flawless guardian, full tank ownership, a maxed tank, runs with all tanks, all biomes and Medic kills;
+- achievement rewards total 2,950 permanent coins and can only be collected once;
+- the Achievements menu shows locked/completed states and rewards;
+- damage from projectiles, artillery and mines contributes to flawless-guardian tracking;
+- mastery records, achievement IDs and lifetime progress are sanitized and saved locally;
+- all previous evolution, objective, guardian, quality, save, garage, portrait, performance, timing, collision, audio, accessibility, offline and Android behavior remains active.
 
 Detailed reports are in:
 
@@ -28,8 +28,9 @@ Detailed reports are in:
 - `docs/phase10-realm-guardians-report.md`
 - `docs/phase11-strategic-enemies-objectives-report.md`
 - `docs/phase12-upgrade-evolutions-report.md`
+- `docs/phase13-mastery-achievements-report.md`
 
-The next approved stage is tank mastery and achievements, followed by offline daily challenges and extra game modes. Final-release signing and store work remain separate.
+The next approved stage is deterministic offline daily challenges, followed by additional game modes. Final-release signing and store work remain separate.
 
 ## Project structure
 

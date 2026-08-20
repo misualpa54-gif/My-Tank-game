@@ -94,6 +94,7 @@
         <h2>Conquer Every Biome</h2>
         <button type="button" class="btn btn-continue" id="btn-continue">Continue Run</button>
         <button type="button" class="btn btn-garage" id="btn-garage">Garage</button>
+        <button type="button" class="btn btn-achievements" id="btn-achievements">Achievements</button>
         <button type="button" class="btn" id="btn-start">Start Adventure</button>
         <div class="game-info">
             Lower left: Move • Lower right: Hold to fire<br>
@@ -151,6 +152,20 @@
     </div>
 
 
+
+    <div id="achievements-screen" class="screen hidden">
+        <div class="achievements-panel">
+            <div class="garage-header">
+                <div>
+                    <h1>Achievements</h1>
+                    <p>Offline goals and permanent coin rewards</p>
+                </div>
+                <div class="garage-coins">💰 <span id="achievement-coins">0</span></div>
+            </div>
+            <div id="achievements-list" class="achievements-list"></div>
+            <button type="button" class="btn" id="btn-close-achievements">Back to Menu</button>
+        </div>
+    </div>
 
     <div id="garage-screen" class="screen hidden">
         <div class="garage-panel">
