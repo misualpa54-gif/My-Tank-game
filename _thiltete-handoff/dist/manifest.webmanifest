@@ -1,0 +1,32 @@
+{
+  "name": "Thiltete Tank Game",
+  "short_name": "Thiltete",
+  "description": "A mobile-first 3D arena survival roguelite. Ten themed realms, nine enemy types, six bosses, and an endless climb.",
+  "start_url": "./ThilteteTankGame.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#1a0a2e",
+  "theme_color": "#1a0a2e",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

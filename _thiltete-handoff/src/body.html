@@ -1,0 +1,210 @@
+<div id="game-container"></div>
+    <div id="input-layer"></div>
+    <div id="damage-overlay"></div>
+    <div id="heal-overlay"></div>
+    
+    <div id="hud-layer">
+        <div id="hud-top">
+            <!-- v7: slim HUD — compact chips, stat numbers moved to the pause screen -->
+            <div class="hud-left">
+                <div class="hud-chip">🏆 <span id="score">0</span> &nbsp;·&nbsp; 💰 <span id="coins">0</span></div>
+                <div id="kill-feed"></div>
+            </div>
+            <div class="hud-center">
+                <div class="hud-chip level-chip">LV <span id="level">1</span>
+                    <div class="xp-bar-container"><div class="xp-bar-fill" id="xp-bar"></div></div>
+                </div>
+            </div>
+            <div class="hud-top-right">
+                <canvas id="minimap" width="84" height="84"></canvas>
+            </div>
+        </div>
+        <div id="hud-bottom">
+            <div id="hp-panel">
+                <div class="health-bar-container">
+                    <div class="health-bar-fill" id="hp-bar"></div>
+                </div>
+                <div class="hp-text">❤️ <span id="hp-text">100</span></div>
+            </div>
+        </div>
+    </div>
+    <div id="vignette-overlay"></div>
+    <div id="dmg-direction"></div>
+
+    <div id="boss-banner"></div>
+    <div id="toast-stack"></div>
+    <div id="boss-bar"><div id="boss-bar-name">BOSS</div><div class="boss-bar-track"><div id="boss-bar-fill"></div></div></div>
+
+
+    <button id="btn-pause" class="pause-btn" aria-label="Pause game">⏸</button>
+
+    <div class="hud-quickbar" id="hud-quickbar">
+        <button class="hud-icon-btn" id="btn-settings" aria-label="Settings">⚙</button>
+        <button class="hud-icon-btn" id="btn-sound" aria-label="Sound">🔊</button>
+        <button class="hud-icon-btn" id="btn-camera" aria-label="Camera">📷</button>
+        <button class="hud-icon-btn" id="btn-assist" aria-label="Assist">🎯</button>
+    </div>
+
+
+    <div class="biome-indicator" id="biome-name">Forest Realm</div>
+
+    <div id="joystick-base">
+        <div id="joystick-knob"></div>
+    </div>
+
+    <div id="upgrade-notification">
+        <h2 style="margin:0 0 5px 0;font-size:20px;">🌟 LEVEL UP!</h2>
+        <p id="upgrade-text" style="margin:0;opacity:0.9;font-size:14px;">Speed increased!</p>
+    </div>
+
+    <div id="enemy-intro">
+        <strong id="enemy-name">Scout Tank</strong>
+        <p id="enemy-desc" style="margin:5px 0 0 0;opacity:0.7;font-size:12px;">Fast but fragile</p>
+    </div>
+
+    <div id="start-screen" class="screen">
+        <div class="home-logo">⚔️</div>
+        <h1>THILTETE</h1>
+        <h2>Tank Game &middot; Conquer Every Biome</h2>
+        <div class="home-stats">
+            <div class="home-stat"><span class="home-num" id="home-best-casual">0</span><span class="home-label">Best · Casual</span></div>
+            <div class="home-stat"><span class="home-num" id="home-best-levels">0</span><span class="home-label">Best · Levels</span></div>
+            <div class="home-stat"><span class="home-num" id="home-coins">0</span><span class="home-label">💰 Coins</span></div>
+        </div>
+        <button class="btn" id="btn-casual">▶ &nbsp;Casual</button>
+        <button class="btn mode-btn" id="btn-levels">🎯 &nbsp;Level Mode</button>
+        <button class="btn" id="btn-shop-home">🛒 &nbsp;Armory</button>
+        <button class="btn" id="btn-awards" style="background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%); box-shadow: 0 10px 40px rgba(245,158,11,0.4); padding: 13px 44px; font-size: 14px;">🏆 &nbsp;Awards</button>
+        <div class="game-info">
+            Left side: Move • Right side: Auto-fire<br>
+            Casual: endless climb with saved progress • Levels: your rules
+        </div>
+        <div class="version-tag" id="version-tag">v1.0</div>
+    </div>
+
+    <div id="casual-screen" class="screen hidden">
+        <div class="settings-panel" style="width: min(94vw, 480px);">
+            <div class="settings-title">▶ Casual</div>
+            <div class="settings-subtitle">Endless climb — difficulty rises forever. Best score: <b id="casual-best-label">0</b></div>
+            <button class="btn" id="btn-casual-new" style="padding: 14px 40px; font-size: 15px;">▶ &nbsp;New Casual Run</button>
+            <div class="cfg-label" style="margin-top:16px;">💾 Saved runs <span id="casual-save-count"></span></div>
+            <div id="casual-saves" style="max-height: 40vh; overflow-y: auto;"></div>
+            <button class="hud-icon-btn wide" id="btn-casual-back" style="margin-top: 12px; width: 100%;">Back</button>
+        </div>
+    </div>
+
+    <div id="save-dialog" class="hidden">
+        <div class="settings-panel" style="width: min(92vw, 380px);">
+            <div class="settings-title" style="font-size:1.3rem;">💾 Save run</div>
+            <div class="settings-subtitle" id="save-dialog-info"></div>
+            <input type="text" id="save-name-input" maxlength="24" placeholder="Save name…" style="width:100%; padding:12px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.07); color:#fff; font-size:15px; outline:none;">
+            <div style="display:flex; gap:10px; margin-top:14px;">
+                <button class="btn" id="btn-save-confirm" style="margin:0; flex:1; padding:12px 0; font-size:14px;">💾 Save</button>
+                <button class="hud-icon-btn wide" id="btn-save-cancel" style="flex:1;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="awards-screen" class="screen hidden">
+        <div class="settings-panel" style="width: min(94vw, 500px);">
+            <div class="settings-title">🏆 Awards</div>
+            <div class="settings-subtitle" id="awards-sub"></div>
+            <div class="cfg-label">📅 Daily challenges <span id="daily-date" style="text-transform:none;letter-spacing:0;font-weight:500;"></span></div>
+            <div id="daily-list"></div>
+            <div class="cfg-label">🎖️ Achievements</div>
+            <div id="ach-list" style="max-height: 34vh; overflow-y: auto;"></div>
+            <button class="hud-icon-btn wide" id="btn-awards-back" style="margin-top: 12px; width: 100%;">Back</button>
+        </div>
+    </div>
+
+    <div id="levels-screen" class="screen hidden">
+        <div class="settings-panel" style="width: min(94vw, 480px);">
+            <div class="settings-title">🎯 Level Mode</div>
+            <div class="settings-subtitle">Set the battle conditions</div>
+            <div class="cfg-label">Enemy density</div>
+            <div class="cfg-row" id="cfg-density">
+                <button class="cfg-chip" data-v="6">Light</button>
+                <button class="cfg-chip sel" data-v="10">Normal</button>
+                <button class="cfg-chip" data-v="14">Heavy</button>
+                <button class="cfg-chip" data-v="18">Chaos</button>
+            </div>
+            <div class="cfg-label">Difficulty</div>
+            <div class="cfg-row" id="cfg-difficulty">
+                <button class="cfg-chip" data-v="easy">Easy</button>
+                <button class="cfg-chip sel" data-v="normal">Normal</button>
+                <button class="cfg-chip" data-v="hard">Hard</button>
+                <button class="cfg-chip" data-v="nightmare">Nightmare</button>
+            </div>
+            <div class="cfg-label">Starting level <span id="cfg-level-val">1</span> <span id="cfg-level-cap" style="text-transform:none; letter-spacing:0; font-weight:500;"></span></div>
+            <input type="range" id="cfg-level" min="1" max="30" value="1" step="1">
+            <button class="btn" id="btn-levels-start" style="margin-top:16px;">▶ &nbsp;Deploy</button>
+            <button class="hud-icon-btn wide" id="btn-levels-back" style="margin-top:10px; width:100%;">Back</button>
+        </div>
+    </div>
+
+    <div id="game-over-screen" class="screen hidden">
+        <h1>💀 Defeated</h1>
+        <h2>Score: <span id="final-score">0</span> • Level: <span id="final-level">1</span></h2>
+        <div class="run-stats">
+            <div class="run-stat"><span class="run-num" id="final-kills">0</span><span class="run-label">Kills</span></div>
+            <div class="run-stat"><span class="run-num" id="final-time">0:00</span><span class="run-label">Survived</span></div>
+            <div class="run-stat"><span class="run-num" id="final-coins">0</span><span class="run-label">Coins earned</span></div>
+            <div class="run-stat"><span class="run-num" id="final-best">0</span><span class="run-label">Best score</span></div>
+        </div>
+        <div id="new-best-badge" class="hidden">★ NEW BEST! ★</div>
+        <button class="btn btn-restart" id="btn-restart">Try Again</button>
+        <button class="btn" id="btn-shop" style="background: linear-gradient(135deg, #0ea5e9 0%, #0369a1 100%); box-shadow: 0 10px 40px rgba(14,165,233,0.4);">🛒 Armory &nbsp;·&nbsp; 💰 <span id="shop-coins-go">0</span></button>
+    </div>
+
+    <div id="shop-screen" class="screen hidden">
+        <div class="settings-panel" style="width: min(94vw, 480px);">
+            <div class="settings-title">🛒 Armory</div>
+            <div class="settings-subtitle">Permanent upgrades — spend coins, keep them forever · Balance: 💰 <span id="shop-coins">0</span></div>
+            <div id="shop-items"></div>
+            <button class="hud-icon-btn wide" id="btn-shop-close" style="margin-top: 14px; width: 100%;">Close</button>
+        </div>
+    </div>
+
+
+
+    <div id="settings-screen" class="screen hidden">
+        <div class="settings-panel">
+            <div class="settings-title">Game Settings</div>
+            <div class="settings-subtitle">Mobile HUD controls</div>
+            <div class="settings-grid">
+                <button class="hud-icon-btn wide" id="toggle-sound-panel">Sound: On</button>
+                <button class="hud-icon-btn wide" id="toggle-music-panel">Music: On</button>
+                <button class="hud-icon-btn wide" id="toggle-quality-panel">Graphics: Auto</button>
+                <button class="hud-icon-btn wide" id="toggle-camera-panel">Camera: Follow</button>
+                <button class="hud-icon-btn wide" id="toggle-assist-panel">Assist: On</button>
+                <button class="hud-icon-btn wide" id="close-settings-panel">Close</button>
+            </div>
+            <div class="settings-row">
+                <div class="settings-label">Camera</div>
+                <div class="settings-note">Follow = close combat. Wide = more view.</div>
+                <div class="settings-label">Control assist</div>
+                <div class="settings-note">Assist keeps auto-aim sticky and input easy.</div>
+                <div class="settings-label">Sound</div>
+                <div class="settings-note">Beep UI, fire, hit, and pause actions.</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="pause-screen" class="screen hidden">
+        <h1>⏸ Paused</h1>
+        <div class="pause-build">
+            <div class="pb-title">YOUR BUILD</div>
+            <div class="pb-chips">
+                <span class="pb-chip">⚡ <b id="stat-speed">100</b>%</span>
+                <span class="pb-chip">💥 <b id="stat-damage">100</b>%</span>
+                <span class="pb-chip">🛡️ <b id="stat-armor">0</b></span>
+                <span class="pb-chip">🔄 <b id="stat-regen">0</b>/s</span>
+                <span class="pb-chip">🎯 <b id="stat-crit">0</b>%</span>
+                <span class="pb-chip">🔱 <b id="stat-multishot">0</b></span>
+            </div>
+        </div>
+        <button class="btn" id="btn-resume">Resume</button>
+        <button class="btn" id="btn-pause-settings">⚙ Settings</button>
+        <button class="btn" id="btn-save-run">💾 Save</button>
+        <button class="btn btn-restart" id="btn-quit">Quit to Menu</button>
+    </div>

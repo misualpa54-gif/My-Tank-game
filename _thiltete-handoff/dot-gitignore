@@ -1,0 +1,9 @@
+# Build scratch — dist/ITSELF is committed (the playable artifact),
+# so only transient junk is ignored here.
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
