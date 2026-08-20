@@ -183,6 +183,18 @@ New coverage verifies:
 - 30 biome rebuilds remain under scene/collider budgets;
 - all previous mode, save, collision, mastery, economy, Android, portrait, and offline tests still pass.
 
+## Phase 17 Android artifact
+
+The Java 21 cloud check, Android unit-test task, debug assembly, and upload succeeded.
+
+- Workflow: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32411010999`
+- Artifact: `https://github.com/misualpa54-gif/My-Tank-game/actions/runs/32411010999/artifacts/9422155721`
+- Artifact name: `TankRealms-debug-apk`
+- Download contains: `app-debug.apk`
+- Archive size: 3,789,786 bytes (approximately 3.79 MB)
+- GitHub archive SHA-256: `2551caf63d81f401a129f3652d4598331d97a72dc45a65e9408b29f2901dceab`
+- Expires: 19 September 2026
+
 ## Next approved package
 
 Package 2 is the slim HUD, north-up radar, damage arc, two-line kill feed, compact expandable build strip, Follow/Wide/Adaptive camera, loading-safe render gating, and home stats/version/storage-warning presentation.
