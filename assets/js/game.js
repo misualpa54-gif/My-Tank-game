@@ -231,9 +231,29 @@
             { id: 'maxHp', stat: 'maxHp', icon: '❤️', name: 'Reinforced Hull', amount: 20, maxTier: 10, minLevel: 2, description: 'Maximum health +20' },
             { id: 'regen', stat: 'regen', icon: '🔄', name: 'Repair Nanites', amount: 1, maxTier: 10, minLevel: 4, description: 'Health regeneration +1/s' },
             { id: 'armor', stat: 'armor', icon: '🛡️', name: 'Armor Plating', amount: 5, maxTier: 8, minLevel: 5, description: 'Armor +5' },
-            { id: 'multishot', stat: 'multishot', icon: '🎯', name: 'Triple Shot', amount: 1, maxTier: 1, minLevel: 10, description: 'Fire three plasma bolts' }
+            { id: 'multishot', stat: 'multishot', icon: '🎯', name: 'Triple Shot', amount: 1, maxTier: 1, minLevel: 10, description: 'Fire three plasma bolts' },
+            { id: 'piercing', stat: 'piercing', icon: '➠', name: 'Piercing Plasma', amount: 1, maxTier: 2, minLevel: 6, description: 'Projectiles pass through +1 enemy' },
+            { id: 'explosive', stat: 'explosive', icon: '💣', name: 'Explosive Impact', amount: 0.15, maxTier: 3, minLevel: 7, description: 'Hits damage nearby enemies' },
+            { id: 'ricochet', stat: 'ricochet', icon: '↩', name: 'Ricochet', amount: 1, maxTier: 2, minLevel: 8, description: 'Projectiles bounce from walls' },
+            { id: 'homing', stat: 'homing', icon: '🧲', name: 'Homing Guidance', amount: 0.08, maxTier: 3, minLevel: 8, description: 'Projectiles steer toward targets' },
+            { id: 'critChance', stat: 'critChance', icon: '✦', name: 'Critical Core', amount: 0.05, maxTier: 5, minLevel: 6, description: '+5% critical-hit chance' },
+            { id: 'emergencyShield', stat: 'emergencyShield', icon: '🔰', name: 'Emergency Shield', amount: 1, maxTier: 1, minLevel: 7, description: 'Reduces a dangerous hit; 20s recharge' },
+            { id: 'reactiveArmor', stat: 'reactiveArmor', icon: '⬡', name: 'Reactive Armor', amount: 1, maxTier: 1, minLevel: 8, description: 'Reduces one hit; 8s recharge' },
+            { id: 'lastStand', stat: 'lastStand', icon: '⚠', name: 'Last Stand', amount: 1, maxTier: 1, minLevel: 7, description: 'Fire 30% faster below 25% health' },
+            { id: 'repairBurst', stat: 'repairBurst', icon: '✚', name: 'Repair Burst', amount: 1, maxTier: 3, minLevel: 6, description: 'Every 5 kills restores health' },
+            { id: 'turboTracks', stat: 'turboTracks', icon: '🏎', name: 'Turbo Tracks', amount: 1, maxTier: 1, minLevel: 5, description: 'Move faster after avoiding damage' },
+            { id: 'phaseDash', stat: 'phaseDash', icon: '💨', name: 'Phase Dash', amount: 1, maxTier: 1, minLevel: 6, description: 'Double-tap movement zone to dash' },
+            { id: 'lightweight', stat: 'lightweight', icon: '🪶', name: 'Lightweight Frame', amount: 1, maxTier: 1, minLevel: 5, description: '+25% speed but -20 maximum health', custom: true }
         ];
         const UPGRADE_BY_ID = new Map(UPGRADE_DEFINITIONS.map(upgrade => [upgrade.id, upgrade]));
+        const EVOLUTION_DEFINITIONS = [
+            { id: 'plasmaBarrage', name: 'Plasma Barrage', requirements: { damage: 3, multishot: 1 } },
+            { id: 'fortressProtocol', name: 'Fortress Protocol', requirements: { armor: 4, maxHp: 4 } },
+            { id: 'mobileRepair', name: 'Mobile Repair Unit', requirements: { speed: 3, regen: 3 } },
+            { id: 'infernoCannon', name: 'Inferno Cannon', requirements: { fireRate: 3, explosive: 2 } },
+            { id: 'railgunCore', name: 'Railgun Core', requirements: { piercing: 2, critChance: 3 } }
+        ];
+        const EVOLUTION_BY_ID = new Map(EVOLUTION_DEFINITIONS.map(item => [item.id, item]));
         const SAVE_VERSION = 1;
         const PROFILE_STORAGE_KEY = 'tank_realms_profile_v1';
         const ACTIVE_RUN_STORAGE_KEY = 'tank_realms_active_run_v1';
@@ -351,7 +371,19 @@
             armor: 0,
             regen: 0,
             maxHp: 100,
-            multishot: 0
+            multishot: 0,
+            piercing: 0,
+            explosive: 0,
+            ricochet: 0,
+            homing: 0,
+            critChance: 0,
+            emergencyShield: 0,
+            reactiveArmor: 0,
+            lastStand: 0,
+            repairBurst: 0,
+            turboTracks: 0,
+            phaseDash: 0,
+            lightweight: 0
         });
 
         function createDefaultPlayerStats() {
@@ -409,6 +441,16 @@
             };
         }
 
+        function createDefaultAbilityState() {
+            return {
+                timeSinceDamage: 999,
+                reactiveReadyIn: 0,
+                emergencyReadyIn: 0,
+                dashReadyIn: 0,
+                lastMoveTapAt: -Infinity
+            };
+        }
+
         let profile = createDefaultProfile();
         let cachedActiveRun = null;
         let storageAvailable = true;
@@ -453,6 +495,8 @@
             newRunConfirmOpen: false,
             runStats: createDefaultRunStats(),
             upgradeTiers: createDefaultUpgradeTiers(),
+            evolutions: [],
+            abilityState: createDefaultAbilityState(),
             runTankId: 'vanguard',
             runPermanentUpgrades: createDefaultPermanentUpgradeTiers(),
             runBaseStats: createDefaultPlayerStats(),
@@ -753,6 +797,14 @@
             return stats;
         }
 
+        function deriveUnlockedEvolutions(upgradeTiers) {
+            return EVOLUTION_DEFINITIONS.filter(evolution =>
+                Object.entries(evolution.requirements).every(([upgradeId, requiredTier]) =>
+                    (upgradeTiers?.[upgradeId] || 0) >= requiredTier
+                )
+            ).map(evolution => evolution.id);
+        }
+
         function getStatsFromUpgradeTiers(upgradeTiers, baseStats = DEFAULT_PLAYER_STATS) {
             const stats = { ...baseStats };
             UPGRADE_DEFINITIONS.forEach(upgrade => {
@@ -763,8 +815,20 @@
                     0,
                     true
                 );
-                stats[upgrade.stat] += upgrade.amount * tier;
+                if (upgrade.id === 'lightweight' && tier > 0) {
+                    stats.lightweight = 1;
+                    stats.speed += 25;
+                    stats.maxHp = Math.max(40, stats.maxHp - 20);
+                } else {
+                    stats[upgrade.stat] += upgrade.amount * tier;
+                }
             });
+            const evolutions = deriveUnlockedEvolutions(upgradeTiers);
+            if (evolutions.includes('fortressProtocol')) {
+                stats.maxHp += 30;
+                stats.armor += 5;
+            }
+            if (evolutions.includes('mobileRepair')) stats.regen += 2;
             return stats;
         }
 
@@ -907,6 +971,16 @@
             };
         }
 
+        function sanitizeAbilityState(savedState) {
+            return {
+                timeSinceDamage: clampSavedNumber(savedState?.timeSinceDamage, 0, 1e9, 999),
+                reactiveReadyIn: clampSavedNumber(savedState?.reactiveReadyIn, 0, 60, 0),
+                emergencyReadyIn: clampSavedNumber(savedState?.emergencyReadyIn, 0, 120, 0),
+                dashReadyIn: clampSavedNumber(savedState?.dashReadyIn, 0, 30, 0),
+                lastMoveTapAt: -Infinity
+            };
+        }
+
         function sanitizeObjective(savedObjective) {
             const definition = REALM_OBJECTIVES.find(item => item.type === savedObjective?.type);
             if (!definition) return null;
@@ -983,6 +1057,8 @@
                 activeObjective: sanitizeObjective(savedRun.activeObjective),
                 lastObjectiveRealm: clampSavedNumber(savedRun.lastObjectiveRealm, -1, 10000, -1, true),
                 upgradeTiers,
+                evolutions: deriveUnlockedEvolutions(upgradeTiers),
+                abilityState: sanitizeAbilityState(savedRun.abilityState),
                 runTankId,
                 runPermanentUpgrades,
                 runBaseStats,
@@ -1053,6 +1129,8 @@
                 activeObjective: state.activeObjective ? { ...state.activeObjective } : null,
                 lastObjectiveRealm: state.lastObjectiveRealm,
                 upgradeTiers: { ...state.upgradeTiers },
+                evolutions: [...state.evolutions],
+                abilityState: { ...state.abilityState, lastMoveTapAt: 0 },
                 runTankId: state.runTankId,
                 runPermanentUpgrades: { ...state.runPermanentUpgrades },
                 comboCount: state.comboCount,
@@ -2667,6 +2745,10 @@
                     let speed = CONFIG.playerSpeed;
                     if (this.isPlayer) {
                         speed *= state.playerStats.speed / 100;
+                        if (state.playerStats.turboTracks > 0 &&
+                            state.abilityState.timeSinceDamage >= 5) {
+                            speed *= 1.15;
+                        }
                     } else {
                         speed *= (this.typeData?.speed || 1) * 0.55 * this.speedMultiplier;
                     }
@@ -2755,9 +2837,26 @@
             }
 
             takeDamage(amount) {
-                const actualDamage = this.isPlayer
+                let actualDamage = this.isPlayer
                     ? calculateDamageAfterArmor(amount, state.playerStats.armor)
                     : amount;
+                if (this.isPlayer) {
+                    if (state.evolutions.includes('fortressProtocol')) actualDamage *= 0.8;
+                    if (state.playerStats.reactiveArmor > 0 &&
+                        state.abilityState.reactiveReadyIn <= 0) {
+                        actualDamage *= 0.55;
+                        state.abilityState.reactiveReadyIn = 8;
+                        showUpgradeNotification('⬡ Reactive Armor absorbed damage');
+                    }
+                    if (state.playerStats.emergencyShield > 0 &&
+                        state.abilityState.emergencyReadyIn <= 0 &&
+                        this.hp - actualDamage <= this.maxHp * 0.25) {
+                        actualDamage *= 0.5;
+                        state.abilityState.emergencyReadyIn = 20;
+                        showUpgradeNotification('🔰 Emergency Shield activated');
+                    }
+                    state.abilityState.timeSinceDamage = 0;
+                }
                 this.hp -= actualDamage;
 
                 this.mesh.traverse(c => {
@@ -2872,7 +2971,9 @@
                 color: bulletColor,
                 projectileStyle,
                 poolKey: `${bulletColor}-${projectileStyle}`,
-                previousPosition: new THREE.Vector3()
+                previousPosition: new THREE.Vector3(),
+                frameEndPosition: new THREE.Vector3(),
+                hitEnemyIds: new Set()
             };
         }
 
@@ -2884,10 +2985,12 @@
                 : createBulletVisual(bulletColor, projectileStyle);
 
             bullet.group.scale.set(1, 1, 1);
+            bullet.group.children[0].scale.set(1, 1, 1);
             bullet.innerGlow.scale.set(1, 1, 1);
             bullet.outerGlow.scale.set(1, 1, 1);
             bullet.light.intensity = 2;
             bullet.light.visible = getQualityPreset().dynamicLights;
+            bullet.hitEnemyIds.clear();
             return bullet;
         }
 
@@ -2935,8 +3038,11 @@
             );
             if (source.isPlayer) triggerHaptic('light');
 
+            const playerShotCount = state.evolutions.includes('plasmaBarrage')
+                ? 5
+                : state.playerStats.multishot > 0 ? 3 : 1;
             const shotCount = options.shotCount ??
-                (source.isPlayer && state.playerStats.multishot > 0 ? 3 : 1);
+                (source.isPlayer ? playerShotCount : 1);
             const spreadAngle = options.spreadAngle ?? 0.12;
 
             for (let i = 0; i < shotCount; i++) {
@@ -2973,14 +3079,26 @@
                 const baseShotDamage = source.isPlayer
                     ? CONFIG.baseDamage * (state.playerStats.damage / 100)
                     : (ENEMY_TYPES[source.type]?.damage || 12);
-                const damage = baseShotDamage * (options.damageMultiplier ?? 1);
+                const isCritical = source.isPlayer && Math.random() < state.playerStats.critChance;
+                const criticalMultiplier = state.evolutions.includes('railgunCore') ? 2.5 : 2;
+                const damage = baseShotDamage * (options.damageMultiplier ?? 1) *
+                    (isCritical ? criticalMultiplier : 1);
 
+                if (isCritical) bulletGroup.children[0].scale.setScalar(1.35);
                 bulletGroup.userData = {
                     vel: dir.multiplyScalar(options.bulletSpeed ?? CONFIG.bulletSpeed),
                     isPlayer: source.isPlayer,
                     damage: damage,
                     life: 3,
-                    color: bulletColor
+                    color: bulletColor,
+                    isCritical,
+                    pierceRemaining: source.isPlayer
+                        ? state.playerStats.piercing +
+                            (state.evolutions.includes('railgunCore') ? 2 : 0)
+                        : 0,
+                    ricochetsRemaining: source.isPlayer ? state.playerStats.ricochet : 0,
+                    explosive: source.isPlayer ? state.playerStats.explosive : 0,
+                    homing: source.isPlayer ? state.playerStats.homing : 0
                 };
 
                 scene.add(bulletGroup);
@@ -3833,6 +3951,8 @@
             state.lastAutoSaveTime = now;
             state.enemiesIntroduced = new Set();
             state.upgradeTiers = createDefaultUpgradeTiers();
+            state.evolutions = [];
+            state.abilityState = createDefaultAbilityState();
             state.runTankId = profile.ownedTanks.includes(profile.selectedTankId)
                 ? profile.selectedTankId
                 : 'vanguard';
@@ -3899,6 +4019,8 @@
                 : null;
             state.lastObjectiveRealm = savedRun.lastObjectiveRealm;
             state.upgradeTiers = { ...savedRun.upgradeTiers };
+            state.evolutions = [...savedRun.evolutions];
+            state.abilityState = { ...savedRun.abilityState };
             state.runTankId = savedRun.runTankId;
             state.runPermanentUpgrades = { ...savedRun.runPermanentUpgrades };
             state.runBaseStats = { ...savedRun.runBaseStats };
@@ -4084,19 +4206,31 @@
             const upgrade = UPGRADE_BY_ID.get(upgradeId);
             if (!upgrade || state.upgradeTiers[upgrade.id] >= upgrade.maxTier) return;
 
+            const oldMaxHp = state.playerStats.maxHp;
+            const previousEvolutions = new Set(state.evolutions);
             state.upgradeTiers[upgrade.id]++;
             state.runStats.upgradeHistory.push(upgrade.id);
-            state.playerStats[upgrade.stat] += upgrade.amount;
-            if (upgrade.stat === 'maxHp') {
-                player.maxHp = state.playerStats.maxHp;
-                player.hp = Math.min(player.hp + upgrade.amount, player.maxHp);
+            state.evolutions = deriveUnlockedEvolutions(state.upgradeTiers);
+            state.playerStats = getStatsFromUpgradeTiers(
+                state.upgradeTiers,
+                state.runBaseStats
+            );
+            player.maxHp = state.playerStats.maxHp;
+            if (player.maxHp > oldMaxHp) {
+                player.hp = Math.min(player.maxHp, player.hp + player.maxHp - oldMaxHp);
+            } else {
+                player.hp = Math.min(player.hp, player.maxHp);
             }
+            const unlockedEvolutionId = state.evolutions.find(id => !previousEvolutions.has(id));
 
             state.pendingUpgradeCount = Math.max(0, state.pendingUpgradeCount - 1);
             state.currentUpgradeChoices = [];
             setScreenVisibility('upgrade-choice-screen', false);
-            showUpgradeNotification(`${upgrade.icon} ${upgrade.description}`);
-            playGameSound('upgrade');
+            const evolutionText = unlockedEvolutionId
+                ? ` • Evolution: ${EVOLUTION_BY_ID.get(unlockedEvolutionId).name}!`
+                : '';
+            showUpgradeNotification(`${upgrade.icon} ${upgrade.description}${evolutionText}`);
+            playGameSound(unlockedEvolutionId ? 'unlock' : 'upgrade');
             triggerHaptic('medium');
             updateHUD();
 
@@ -4180,6 +4314,11 @@
                 state.comboCount
             );
             state.runStats.coinsEarned += coinReward;
+            if (state.playerStats.repairBurst > 0 && state.runStats.kills % 5 === 0 && player) {
+                const repairAmount = player.maxHp * 0.03 * state.playerStats.repairBurst;
+                player.hp = Math.min(player.maxHp, player.hp + repairAmount);
+                createHealEffect(player.mesh.position);
+            }
             profile.coins += coinReward;
             playGameSound('coin');
             if (state.comboCount >= 2) playGameSound('combo');
@@ -4370,6 +4509,36 @@
             return true;
         }
 
+        function processEnemyDefeat(enemy) {
+            if (!enemy?.isDead || enemy.rewardProcessed) return;
+            enemy.rewardProcessed = true;
+            recordObjectiveKill(enemy);
+            const enemyData = ENEMY_TYPES[enemy.type] || {};
+            const points = enemyData.points || 100;
+            const rewards = awardEnemyKill(points);
+            addXP(enemyData.xpReward ?? points / 2);
+            const guardianBonus = enemyData.isBoss ? handleGuardianDefeat(enemy) : 0;
+            showScorePopup(
+                enemy.mesh.position.x,
+                enemy.mesh.position.z,
+                rewards.scoreReward,
+                rewards.coinReward + guardianBonus
+            );
+            const enemyIndex = enemies.indexOf(enemy);
+            if (enemyIndex >= 0) enemies.splice(enemyIndex, 1);
+        }
+
+        function damageEnemiesInRadius(position, damage, radius, excludedEnemy) {
+            [...enemies].forEach(enemy => {
+                if (enemy === excludedEnemy || enemy.isDead) return;
+                const dx = enemy.mesh.position.x - position.x;
+                const dz = enemy.mesh.position.z - position.z;
+                if (dx * dx + dz * dz > radius * radius) return;
+                enemy.takeDamage(damage);
+                if (enemy.isDead) processEnemyDefeat(enemy);
+            });
+        }
+
         function showScorePopup(x, z, points, coins = 0) {
             const pos = new THREE.Vector3(x, 3, z);
             pos.project(camera);
@@ -4394,6 +4563,10 @@
             updateRealmObjective(dt);
             updateHazards(dt);
             updateCommanderBuffs();
+            state.abilityState.timeSinceDamage += dt;
+            state.abilityState.reactiveReadyIn = Math.max(0, state.abilityState.reactiveReadyIn - dt);
+            state.abilityState.emergencyReadyIn = Math.max(0, state.abilityState.emergencyReadyIn - dt);
+            state.abilityState.dashReadyIn = Math.max(0, state.abilityState.dashReadyIn - dt);
             state.runStats.elapsedSeconds += dt;
 
             // Player movement
@@ -4447,7 +4620,10 @@
             }
 
             // Player shooting
-            const fireRate = CONFIG.fireRate * (100 / state.playerStats.fireRate);
+            const lastStandMultiplier = state.playerStats.lastStand > 0 &&
+                player.hp <= player.maxHp * 0.25 ? 1.3 : 1;
+            const effectiveFireRate = state.playerStats.fireRate * lastStandMultiplier;
+            const fireRate = CONFIG.fireRate * (100 / effectiveFireRate);
             if (state.input.isFiring && clock.getElapsedTime() - state.lastFireTime > fireRate) {
                 shoot(player);
                 state.lastFireTime = clock.getElapsedTime();
@@ -4501,8 +4677,36 @@
             // Bullets
             for (let i = bullets.length - 1; i >= 0; i--) {
                 const b = bullets[i];
+                if (b.group.userData.isPlayer && b.group.userData.homing > 0) {
+                    let homingTarget = null;
+                    let homingDistance = Infinity;
+                    enemies.forEach(enemy => {
+                        if (enemy.isDead || b.hitEnemyIds.has(enemy.mesh.uuid)) return;
+                        const distance = b.group.position.distanceToSquared(enemy.mesh.position);
+                        if (distance < homingDistance) {
+                            homingDistance = distance;
+                            homingTarget = enemy;
+                        }
+                    });
+                    if (homingTarget) {
+                        const speed = b.group.userData.vel.length();
+                        const desiredVelocity = new THREE.Vector3()
+                            .subVectors(homingTarget.mesh.position, b.group.position)
+                            .setY(0)
+                            .normalize()
+                            .multiplyScalar(speed);
+                        b.group.userData.vel.lerp(
+                            desiredVelocity,
+                            getFrameEquivalentAlpha(b.group.userData.homing, dt)
+                        );
+                        b.group.lookAt(
+                            b.group.position.clone().add(b.group.userData.vel)
+                        );
+                    }
+                }
                 b.previousPosition.copy(b.group.position);
                 b.group.position.addScaledVector(b.group.userData.vel, dt);
+                b.frameEndPosition.copy(b.group.position);
                 b.group.userData.life -= dt;
 
                 // Pulse effect
@@ -4521,8 +4725,23 @@
                 if (wallHitTime !== null) {
                     bulletImpactPosition.copy(b.previousPosition).lerp(b.group.position, wallHitTime);
                     b.group.position.copy(bulletImpactPosition);
-                    hit = true;
                     createExplosion(b.group.position, 6, 0x888888, 'wall');
+                    if (b.group.userData.ricochetsRemaining > 0) {
+                        if (Math.abs(Math.abs(b.group.position.x) - 46) < 0.2) {
+                            b.group.userData.vel.x *= -1;
+                        }
+                        if (Math.abs(Math.abs(b.group.position.z) - 46) < 0.2) {
+                            b.group.userData.vel.z *= -1;
+                        }
+                        b.group.userData.ricochetsRemaining--;
+                        b.group.position.addScaledVector(
+                            b.group.userData.vel.clone().normalize(),
+                            0.08
+                        );
+                        b.frameEndPosition.copy(b.group.position);
+                    } else {
+                        hit = true;
+                    }
                 }
 
                 // Environment Object Check (foreground trees and rocks only).
@@ -4556,7 +4775,7 @@
                     if (b.group.userData.isPlayer) {
                         for (let j = enemies.length - 1; j >= 0; j--) {
                             const enemy = enemies[j];
-                            if (!enemy.isDead) {
+                            if (!enemy.isDead && !b.hitEnemyIds.has(enemy.mesh.uuid)) {
                                 // Preserve the forgiving cylindrical hitbox but
                                 // test the projectile's complete travelled path.
                                 const enemyHitTime = getSegmentCylinderHitTime(
@@ -4592,24 +4811,26 @@
                                     // Pass enemy type for specific visual effects
                                     createExplosion(b.group.position, 18, enemyColor, 'armor', enemy.type);
 
-                                    if (enemy.isDead) {
-                                        recordObjectiveKill(enemy);
-                                        const enemyData = ENEMY_TYPES[enemy.type] || {};
-                                        const points = enemyData.points || 100;
-                                        const rewards = awardEnemyKill(points);
-                                        addXP(enemyData.xpReward ?? points / 2);
-                                        const guardianBonus = enemyData.isBoss
-                                            ? handleGuardianDefeat(enemy)
+                                    b.hitEnemyIds.add(enemy.mesh.uuid);
+                                    if (b.group.userData.explosive > 0) {
+                                        const infernoBonus = state.evolutions.includes('infernoCannon')
+                                            ? 0.2
                                             : 0;
-                                        showScorePopup(
-                                            enemy.mesh.position.x,
-                                            enemy.mesh.position.z,
-                                            rewards.scoreReward,
-                                            rewards.coinReward + guardianBonus
+                                        damageEnemiesInRadius(
+                                            b.group.position,
+                                            b.group.userData.damage *
+                                                (b.group.userData.explosive + infernoBonus),
+                                            state.evolutions.includes('infernoCannon') ? 7 : 5,
+                                            enemy
                                         );
-                                        enemies.splice(j, 1);
-                                    } else if (enemy.typeData?.isBoss) {
-                                        updateBossHUD();
+                                    }
+                                    if (enemy.isDead) processEnemyDefeat(enemy);
+                                    else if (enemy.typeData?.isBoss) updateBossHUD();
+
+                                    if (b.group.userData.pierceRemaining > 0) {
+                                        b.group.userData.pierceRemaining--;
+                                        b.group.position.copy(b.frameEndPosition);
+                                        continue;
                                     }
                                     hit = true;
                                     break;
@@ -4884,6 +5105,29 @@
             renderer.render(scene, camera);
         }
 
+        function performPhaseDash() {
+            if (!player || player.isDead || state.playerStats.phaseDash <= 0 ||
+                state.abilityState.dashReadyIn > 0) return false;
+            const direction = new THREE.Vector3(state.input.x, 0, state.input.y);
+            if (direction.lengthSq() < 0.01) {
+                direction.set(
+                    Math.sin(player.mesh.rotation.y),
+                    0,
+                    Math.cos(player.mesh.rotation.y)
+                );
+            }
+            direction.normalize().multiplyScalar(6);
+            const nextPosition = player.mesh.position.clone().add(direction);
+            nextPosition.x = Math.max(-44, Math.min(44, nextPosition.x));
+            nextPosition.z = Math.max(-44, Math.min(44, nextPosition.z));
+            nextPosition.y = getTerrainHeight(nextPosition.x, nextPosition.z) + 0.1;
+            player.mesh.position.copy(nextPosition);
+            state.abilityState.dashReadyIn = 4;
+            createExplosion(nextPosition, 8, 0x8b5cf6, 'default');
+            triggerHaptic('medium');
+            return true;
+        }
+
         // ============================================
         // INPUT HANDLING
         // ============================================
@@ -4935,6 +5179,11 @@
                     const isLeftHalf = touch.clientX < window.innerWidth / 2;
                     const isMovementSide = state.leftHanded ? !isLeftHalf : isLeftHalf;
                     if (isMovementSide) {
+                        const tapTime = performance.now();
+                        if (tapTime - state.abilityState.lastMoveTapAt <= 320) {
+                            performPhaseDash();
+                        }
+                        state.abilityState.lastMoveTapAt = tapTime;
                         if (moveTouch === null) {
                             moveTouch = touch.identifier;
                             stickBase.style.display = 'block';

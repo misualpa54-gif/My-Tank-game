@@ -4,17 +4,17 @@ Tank Realms is a Three.js tank battle game being prepared as a full-screen, offl
 
 ## Current milestone
 
-Phases 1–10 provide the stable offline APK, optimization, portrait controls, saving, upgrades, economy, garage, quality, audio/accessibility, and Realm Guardians. Phase 11 adds strategic combat roles and realm objectives:
+Phases 1–11 provide the stable offline APK plus optimization, saves, upgrades, economy, tanks, quality, audio/accessibility, guardians, strategic enemies, and objectives. Phase 12 expands run builds and evolutions:
 
-- Shield Tanks, Artillery, Mine Layers, Commanders, Drone Carriers, Attack Drones, and Reflectors enter at controlled later levels;
-- visible shields, auras, equipment pods, artillery warning rings, and armed mines explain each role;
-- artillery uses a 1.5-second warning, mines are capped at eight, and all minions obey the global enemy cap;
-- Commander speed/damage buffs and Reflector shield windows create target-priority decisions;
-- one objective at a time asks for a marked Heavy, survival, Medic kills, combo, beacon defense, no-damage play, or a score target;
-- objectives reward permanent coins and a 15% repair;
-- a pending guardian waits until the objective succeeds or fails while normal spawning continues;
-- objective type, progress, timing, score baseline, beacon health, and marked target survive Continue/reload;
-- all previous guardian, quality, saving, garage, portrait, performance, consistency, audio, accessibility, offline, and Android behavior remains active.
+- Piercing, Explosive, Ricochet, Homing, and Critical projectile upgrades create distinct weapon builds;
+- Emergency Shield, Reactive Armor, Last Stand, and Repair Burst add capped defensive options;
+- Turbo Tracks and a double-tap Phase Dash add movement options;
+- Lightweight Frame trades 20 health for 25% speed;
+- Plasma Barrage, Fortress Protocol, Mobile Repair Unit, Inferno Cannon, and Railgun Core unlock from related high-tier combinations;
+- area-damage and piercing kills use the same reward, XP, objective, combo, and guardian progression path as direct kills;
+- pooled projectiles reset special counters and enemy-hit history safely;
+- expanded tiers, derived evolutions, shield recharges, damage timer, and dash cooldown survive Continue/reload;
+- all previous strategic enemy, objective, guardian, quality, saving, garage, portrait, performance, consistency, audio, accessibility, offline, and Android behavior remains active.
 
 Detailed reports are in:
 
@@ -27,8 +27,9 @@ Detailed reports are in:
 - `docs/phase9-polish-balance-report.md`
 - `docs/phase10-realm-guardians-report.md`
 - `docs/phase11-strategic-enemies-objectives-report.md`
+- `docs/phase12-upgrade-evolutions-report.md`
 
-The next approved stage is upgrade evolutions and trade-off upgrades, followed by tank mastery/achievements, daily challenges, and extra modes. Final-release signing and store work remain separate.
+The next approved stage is tank mastery and achievements, followed by offline daily challenges and extra game modes. Final-release signing and store work remain separate.
 
 ## Project structure
 

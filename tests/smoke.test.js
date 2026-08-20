@@ -155,6 +155,9 @@ function createHarness(storageSeed = {}) {
       sanitizeActiveRun,
       addXP,
       applyUpgradeChoice,
+      deriveUnlockedEvolutions,
+      getStatsFromUpgradeTiers,
+      performPhaseDash,
       awardEnemyKill,
       updateCombo,
       queueGuardianIfNeeded,
@@ -414,6 +417,47 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     );
   });
 
+  await t.test('unlocks build evolutions and trade-off upgrades safely', () => {
+    const tiers = {
+      ...api.state().upgradeTiers,
+      damage: 3,
+      multishot: 1,
+      armor: 4,
+      maxHp: 4,
+      speed: 3,
+      regen: 3,
+      fireRate: 3,
+      explosive: 2,
+      piercing: 2,
+      critChance: 3,
+      lightweight: 1
+    };
+    const evolutions = api.deriveUnlockedEvolutions(tiers);
+    assert.deepEqual(Array.from(evolutions), [
+      'plasmaBarrage',
+      'fortressProtocol',
+      'mobileRepair',
+      'infernoCannon',
+      'railgunCore'
+    ]);
+    const stats = api.getStatsFromUpgradeTiers(tiers);
+    assert.equal(stats.lightweight, 1);
+    assert.equal(stats.maxHp, 190);
+    assert.equal(stats.regen, 5);
+    assert.ok(stats.speed > 100);
+  });
+
+  await t.test('phase dash has a cooldown and stays inside the arena', () => {
+    api.startGame();
+    api.state().playerStats.phaseDash = 1;
+    api.state().abilityState.dashReadyIn = 0;
+    const before = api.player().mesh.position.clone();
+    assert.equal(api.performPhaseDash(), true);
+    assert.notEqual(api.player().mesh.position.z, before.z);
+    assert.equal(api.performPhaseDash(), false);
+    assert.equal(api.state().abilityState.dashReadyIn, 4);
+  });
+
   await t.test('gates realm transitions behind biome guardians', () => {
     api.startGame();
     api.addXP(100);
@@ -621,11 +665,11 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
     assert.equal(unsafeRun.playerStats.speed, 205);
     assert.equal(unsafeRun.playerStats.damage, 300);
     assert.equal(unsafeRun.playerStats.fireRate, 220);
-    assert.equal(unsafeRun.playerStats.maxHp, 300);
-    assert.equal(unsafeRun.playerStats.armor, 40);
-    assert.equal(unsafeRun.playerStats.regen, 10);
+    assert.equal(unsafeRun.playerStats.maxHp, 330);
+    assert.equal(unsafeRun.playerStats.armor, 45);
+    assert.equal(unsafeRun.playerStats.regen, 12);
     assert.equal(unsafeRun.playerStats.multishot, 1);
-    assert.equal(unsafeRun.player.hp, 300);
+    assert.equal(unsafeRun.player.hp, 330);
     assert.equal(unsafeRun.player.position.x, 44);
     assert.equal(unsafeRun.player.position.z, -44);
     assert.equal(unsafeRun.enemies.length, 0);
@@ -690,6 +734,26 @@ test('Tank Realms stabilized runtime smoke test', async (t) => {
 
     api.shoot(api.player());
     assert.equal(api.bullets()[0].group, firstBulletGroup);
+    api.releaseBulletAt(0);
+  });
+
+  await t.test('projectile upgrades configure pooled plasma safely', () => {
+    api.startGame();
+    Object.assign(api.state().playerStats, {
+      piercing: 2,
+      explosive: 0.3,
+      ricochet: 2,
+      homing: 0.2,
+      critChance: 1
+    });
+    api.state().evolutions = ['railgunCore', 'infernoCannon'];
+    api.shoot(api.player());
+    const projectile = api.bullets()[0];
+    assert.equal(projectile.group.userData.pierceRemaining, 4);
+    assert.equal(projectile.group.userData.ricochetsRemaining, 2);
+    assert.equal(projectile.group.userData.explosive, 0.3);
+    assert.equal(projectile.group.userData.homing, 0.2);
+    assert.equal(projectile.group.userData.isCritical, true);
     api.releaseBulletAt(0);
   });
 
